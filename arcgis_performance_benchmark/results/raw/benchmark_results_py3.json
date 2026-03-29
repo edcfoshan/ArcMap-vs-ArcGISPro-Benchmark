@@ -1,0 +1,114 @@
+{
+  "export_timestamp": "2026-03-29T17:02:19.420426",
+  "python_version": "3.13.7",
+  "results": [
+    {
+      "test_name": "V1_CreateFishnet",
+      "category": "vector",
+      "success": true,
+      "total_runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "mean_time": 1.0402567000001,
+      "std_time": 0,
+      "min_time": 1.0402567000001,
+      "max_time": 1.0402567000001,
+      "cv_percent": 0.0,
+      "avg_memory_mb": 0.0,
+      "all_times": [
+        1.0402567000001
+      ],
+      "python_version": "3.13.7"
+    },
+    {
+      "test_name": "V2_CreateRandomPoints",
+      "category": "vector",
+      "success": true,
+      "total_runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "mean_time": 0.4366266999995787,
+      "std_time": 0,
+      "min_time": 0.4366266999995787,
+      "max_time": 0.4366266999995787,
+      "cv_percent": 0.0,
+      "avg_memory_mb": 0.0,
+      "all_times": [
+        0.4366266999995787
+      ],
+      "python_version": "3.13.7"
+    },
+    {
+      "test_name": "V3_Buffer",
+      "category": "vector",
+      "success": true,
+      "total_runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "mean_time": 1.0881587000003492,
+      "std_time": 0,
+      "min_time": 1.0881587000003492,
+      "max_time": 1.0881587000003492,
+      "cv_percent": 0.0,
+      "avg_memory_mb": 0.0,
+      "all_times": [
+        1.0881587000003492
+      ],
+      "python_version": "3.13.7"
+    },
+    {
+      "test_name": "V4_Intersect",
+      "category": "vector",
+      "success": true,
+      "total_runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "mean_time": 7.462634200000139,
+      "std_time": 0,
+      "min_time": 7.462634200000139,
+      "max_time": 7.462634200000139,
+      "cv_percent": 0.0,
+      "avg_memory_mb": 0.0,
+      "all_times": [
+        7.462634200000139
+      ],
+      "python_version": "3.13.7"
+    },
+    {
+      "test_name": "V5_SpatialJoin",
+      "category": "vector",
+      "success": true,
+      "total_runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "mean_time": 6.029011499999797,
+      "std_time": 0,
+      "min_time": 6.029011499999797,
+      "max_time": 6.029011499999797,
+      "cv_percent": 0.0,
+      "avg_memory_mb": 0.0,
+      "all_times": [
+        6.029011499999797
+      ],
+      "python_version": "3.13.7"
+    },
+    {
+      "test_name": "V6_CalculateField",
+      "category": "vector",
+      "success": true,
+      "total_runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "mean_time": 6.745519199999762,
+      "std_time": 0,
+      "min_time": 6.745519199999762,
+      "max_time": 6.745519199999762,
+      "cv_percent": 0.0,
+      "avg_memory_mb": 0.0,
+      "all_times": [
+        6.745519199999762
+      ],
+      "python_version": "3.13.7"
+    }
+  ]
+}

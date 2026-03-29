@@ -1,0 +1,212 @@
+{
+  "export_timestamp": "2026-03-29T18:55:00.238000", 
+  "python_version": "2.7.16", 
+  "results": [
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 196.0859375, 
+      "mean_time": 0.6560745, 
+      "test_name": "V1_CreateFishnet", 
+      "min_time": 0.6560745, 
+      "all_times": [
+        0.6560745
+      ], 
+      "failed_runs": 0, 
+      "category": "vector", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 0.6560745, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 198.4296875, 
+      "mean_time": 0.10061000000000009, 
+      "test_name": "V2_CreateRandomPoints", 
+      "min_time": 0.10061000000000009, 
+      "all_times": [
+        0.10061000000000009
+      ], 
+      "failed_runs": 0, 
+      "category": "vector", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 0.10061000000000009, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 199.0390625, 
+      "mean_time": 0.19641409999999992, 
+      "test_name": "V3_Buffer", 
+      "min_time": 0.19641409999999992, 
+      "all_times": [
+        0.19641409999999992
+      ], 
+      "failed_runs": 0, 
+      "category": "vector", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 0.19641409999999992, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 205.26953125, 
+      "mean_time": 0.6724549999999998, 
+      "test_name": "V4_Intersect", 
+      "min_time": 0.6724549999999998, 
+      "all_times": [
+        0.6724549999999998
+      ], 
+      "failed_runs": 0, 
+      "category": "vector", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 0.6724549999999998, 
+      "successful_runs": 1
+    }, 
+    {
+      "category": "vector", 
+      "total_runs": 1, 
+      "success": false, 
+      "test_name": "V5_SpatialJoin", 
+      "error": "All runs failed", 
+      "successful_runs": 0
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 237.07421875, 
+      "mean_time": 1.7982023000000007, 
+      "test_name": "V6_CalculateField", 
+      "min_time": 1.7982023000000007, 
+      "all_times": [
+        1.7982023000000007
+      ], 
+      "failed_runs": 0, 
+      "category": "vector", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 1.7982023000000007, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 237.35546875, 
+      "mean_time": 0.18297729999999923, 
+      "test_name": "R1_CreateConstantRaster", 
+      "min_time": 0.18297729999999923, 
+      "all_times": [
+        0.18297729999999923
+      ], 
+      "failed_runs": 0, 
+      "category": "raster", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 0.18297729999999923, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 243.08203125, 
+      "mean_time": 0.2555100000000001, 
+      "test_name": "R2_Resample", 
+      "min_time": 0.2555100000000001, 
+      "all_times": [
+        0.2555100000000001
+      ], 
+      "failed_runs": 0, 
+      "category": "raster", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 0.2555100000000001, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 243.99609375, 
+      "mean_time": 0.30321320000000007, 
+      "test_name": "R3_Clip", 
+      "min_time": 0.30321320000000007, 
+      "all_times": [
+        0.30321320000000007
+      ], 
+      "failed_runs": 0, 
+      "category": "raster", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 0.30321320000000007, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 244.0234375, 
+      "mean_time": 0.41265710000000055, 
+      "test_name": "R4_RasterCalculator", 
+      "min_time": 0.41265710000000055, 
+      "all_times": [
+        0.41265710000000055
+      ], 
+      "failed_runs": 0, 
+      "category": "raster", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 0.41265710000000055, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 245.12109375, 
+      "mean_time": 1.0428588999999988, 
+      "test_name": "M1_PolygonToRaster", 
+      "min_time": 1.0428588999999988, 
+      "all_times": [
+        1.0428588999999988
+      ], 
+      "failed_runs": 0, 
+      "category": "mixed", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 1.0428588999999988, 
+      "successful_runs": 1
+    }, 
+    {
+      "total_runs": 1, 
+      "avg_memory_mb": 246.484375, 
+      "mean_time": 16.0478199, 
+      "test_name": "M2_RasterToPoint", 
+      "min_time": 16.0478199, 
+      "all_times": [
+        16.0478199
+      ], 
+      "failed_runs": 0, 
+      "category": "mixed", 
+      "success": true, 
+      "python_version": "2.7.16", 
+      "std_time": 0, 
+      "cv_percent": 0.0, 
+      "max_time": 16.0478199, 
+      "successful_runs": 1
+    }
+  ]
+}

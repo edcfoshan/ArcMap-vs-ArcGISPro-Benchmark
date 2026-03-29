@@ -1,0 +1,36 @@
+% ArcGIS Python Performance Comparison
+% Generated on 2026-03-29 17:04:37
+
+\begin{table}[htbp]
+\centering
+\caption{Summary Statistics}
+\begin{tabular}{lc}
+\hline
+\textbf{Metric} & \textbf{Value} \\
+\hline
+Total Tests & 6 \\
+Python 3.x Faster & 3 (50.0\%) \\
+Python 2.7 Faster & 2 (33.3\%) \\
+Average Speedup & 1.12x \\
+\hline
+\end{tabular}
+\label{tab:summary_stats}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Detailed Benchmark Results}
+\begin{tabular}{llcccc}
+\hline
+\textbf{Test} & \textbf{Category} & \textbf{Py2.7 (s)} & \textbf{Py3.x (s)} & \textbf{Speedup} & \textbf{Faster} \\
+\hline
+V1\_CreateFishnet & vector & 1.00$\pm$0.00 & 1.04$\pm$0.00 & 0.96x & Equal \\
+V2\_CreateRandomPoints & vector & 0.37$\pm$0.00 & 0.44$\pm$0.00 & 0.85x & Python\ 2.7 \\
+V3\_Buffer & vector & 1.19$\pm$0.00 & 1.09$\pm$0.00 & 1.10x & Python\ 3.x \\
+V4\_Intersect & vector & 11.97$\pm$0.00 & 7.46$\pm$0.00 & 1.60x & Python\ 3.x \\
+V5\_SpatialJoin & vector & 5.13$\pm$0.00 & 6.03$\pm$0.00 & 0.85x & Python\ 2.7 \\
+V6\_CalculateField & vector & 9.10$\pm$0.00 & 6.75$\pm$0.00 & 1.35x & Python\ 3.x \\
+\hline
+\end{tabular}
+\label{tab:detailed_results}
+\end{table}

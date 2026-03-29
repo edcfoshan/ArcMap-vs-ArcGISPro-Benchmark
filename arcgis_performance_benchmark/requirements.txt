@@ -1,0 +1,9 @@
+# ArcGIS Performance Benchmark Requirements
+# Note: This project requires arcpy which is bundled with ArcGIS
+
+# Only Python standard library is used for compatibility with ArcGIS Python
+# No external dependencies required
+
+# Optional dependencies for visualization (not required for core functionality)
+# matplotlib>=3.0.0; python_version >= "3"
+# numpy>=1.19.0; python_version >= "3"

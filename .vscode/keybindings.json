@@ -1,0 +1,7 @@
+[
+    {
+        "key": "ctrl+alt+k",
+        "command": "kimi.openInTab",
+        "when": "editorTextFocus"
+    }
+]

@@ -1,0 +1,7 @@
+test_name,category,py2_time,py2_std,py2_success,py3_time,py3_std,py3_success,speedup,faster
+V1_CreateFishnet,vector,0.9981115,0,True,1.0402567000001,0,True,0.959485769233598,Equal
+V2_CreateRandomPoints,vector,0.3713938000000001,0,True,0.4366266999995787,0,True,0.8505980051159456,Python 2.7
+V3_Buffer,vector,1.1932093,0,True,1.0881587000003492,0,True,1.0965397786183366,Python 3.x
+V4_Intersect,vector,11.973538399999999,0,True,7.462634200000139,0,True,1.6044654044546063,Python 3.x
+V5_SpatialJoin,vector,5.1295252,0,True,6.029011499999797,0,True,0.8508070021097444,Python 2.7
+V6_CalculateField,vector,9.1009189,0,True,6.745519199999762,0,True,1.3491798970789854,Python 3.x

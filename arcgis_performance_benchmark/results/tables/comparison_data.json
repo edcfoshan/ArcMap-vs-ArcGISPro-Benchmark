@@ -1,0 +1,87 @@
+{
+  "comparison": [
+    {
+      "test_name": "V1_CreateFishnet",
+      "category": "vector",
+      "py2_time": 0.9981115,
+      "py2_std": 0,
+      "py3_time": 1.0402567000001,
+      "py3_std": 0,
+      "speedup": 0.959485769233598,
+      "faster": "Equal",
+      "py2_success": true,
+      "py3_success": true
+    },
+    {
+      "test_name": "V2_CreateRandomPoints",
+      "category": "vector",
+      "py2_time": 0.3713938000000001,
+      "py2_std": 0,
+      "py3_time": 0.4366266999995787,
+      "py3_std": 0,
+      "speedup": 0.8505980051159456,
+      "faster": "Python 2.7",
+      "py2_success": true,
+      "py3_success": true
+    },
+    {
+      "test_name": "V3_Buffer",
+      "category": "vector",
+      "py2_time": 1.1932093,
+      "py2_std": 0,
+      "py3_time": 1.0881587000003492,
+      "py3_std": 0,
+      "speedup": 1.0965397786183366,
+      "faster": "Python 3.x",
+      "py2_success": true,
+      "py3_success": true
+    },
+    {
+      "test_name": "V4_Intersect",
+      "category": "vector",
+      "py2_time": 11.973538399999999,
+      "py2_std": 0,
+      "py3_time": 7.462634200000139,
+      "py3_std": 0,
+      "speedup": 1.6044654044546063,
+      "faster": "Python 3.x",
+      "py2_success": true,
+      "py3_success": true
+    },
+    {
+      "test_name": "V5_SpatialJoin",
+      "category": "vector",
+      "py2_time": 5.1295252,
+      "py2_std": 0,
+      "py3_time": 6.029011499999797,
+      "py3_std": 0,
+      "speedup": 0.8508070021097444,
+      "faster": "Python 2.7",
+      "py2_success": true,
+      "py3_success": true
+    },
+    {
+      "test_name": "V6_CalculateField",
+      "category": "vector",
+      "py2_time": 9.1009189,
+      "py2_std": 0,
+      "py3_time": 6.745519199999762,
+      "py3_std": 0,
+      "speedup": 1.3491798970789854,
+      "faster": "Python 3.x",
+      "py2_success": true,
+      "py3_success": true
+    }
+  ],
+  "statistics": {
+    "total_tests": 6,
+    "py3_faster": 3,
+    "py2_faster": 2,
+    "equal": 1,
+    "average_speedup": 1.1185126427685361,
+    "median_speedup": 1.0965397786183366,
+    "max_speedup": 1.6044654044546063,
+    "min_speedup": 0.8505980051159456
+  },
+  "generated": "2026-03-29T17:04:37.874816"
+}
