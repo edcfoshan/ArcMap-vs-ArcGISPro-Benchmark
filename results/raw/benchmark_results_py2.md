@@ -1,36 +1,36 @@
 # Benchmark Results (py2)
 
-*Generated on 2026-03-29 19:25:39*
+*Generated on 2026-03-29 19:36:41*
 
 ## Summary
 
 | Test Name | Mean Time | Std Time | Min Time | Max Time |
 |---|---|---|---|---|
-| V1_CreateFishnet | 0.6632 | 0 | 0.6632 | 0.6632 |
-| V2_CreateRandomPoints | 0.1030 | 0 | 0.1030 | 0.1030 |
-| V3_Buffer | 0.1986 | 0 | 0.1986 | 0.1986 |
-| V4_Intersect | 0.4374 | 0 | 0.4374 | 0.4374 |
-| V5_SpatialJoin | 1.6846 | 0 | 1.6846 | 1.6846 |
-| V6_CalculateField | 1.4162 | 0 | 1.4162 | 1.4162 |
-| R1_CreateConstantRaster | 0.1768 | 0 | 0.1768 | 0.1768 |
-| R2_Resample | 0.2600 | 0 | 0.2600 | 0.2600 |
-| R3_Clip | 0.3209 | 0 | 0.3209 | 0.3209 |
-| R4_RasterCalculator | 0.4566 | 0 | 0.4566 | 0.4566 |
-| M1_PolygonToRaster | 1.0483 | 0 | 1.0483 | 1.0483 |
-| M2_RasterToPoint | 15.3937 | 0 | 15.3937 | 15.3937 |
+| V1_CreateFishnet | 0.5695 | 0 | 0.5695 | 0.5695 |
+| V2_CreateRandomPoints | 0.0830 | 0 | 0.0830 | 0.0830 |
+| V3_Buffer | 0.1687 | 0 | 0.1687 | 0.1687 |
+| V4_Intersect | 0.3546 | 0 | 0.3546 | 0.3546 |
+| V5_SpatialJoin | 1.2703 | 0 | 1.2703 | 1.2703 |
+| V6_CalculateField | 1.1532 | 0 | 1.1532 | 1.1532 |
+| R1_CreateConstantRaster | 0.1390 | 0 | 0.1390 | 0.1390 |
+| R2_Resample | 0.2250 | 0 | 0.2250 | 0.2250 |
+| R3_Clip | 0.2876 | 0 | 0.2876 | 0.2876 |
+| R4_RasterCalculator | 0.4235 | 0 | 0.4235 | 0.4235 |
+| M1_PolygonToRaster | 0.8910 | 0 | 0.8910 | 0.8910 |
+| M2_RasterToPoint | 13.8439 | 0 | 13.8439 | 13.8439 |
 
 ## Detailed Results
 
 ### V1_CreateFishnet
 
-- **all_times**: [0.6631887]
-- **avg_memory_mb**: 195.6796875
+- **all_times**: [0.5694907]
+- **avg_memory_mb**: 194.3046875
 - **category**: vector
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 0.6631887
-- **mean_time**: 0.6631887
-- **min_time**: 0.6631887
+- **max_time**: 0.5694907
+- **mean_time**: 0.5694907
+- **min_time**: 0.5694907
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -40,14 +40,14 @@
 
 ### V2_CreateRandomPoints
 
-- **all_times**: [0.1029833]
-- **avg_memory_mb**: 198.0078125
+- **all_times**: [0.08296680000000012]
+- **avg_memory_mb**: 196.62890625
 - **category**: vector
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 0.1029833
-- **mean_time**: 0.1029833
-- **min_time**: 0.1029833
+- **max_time**: 0.0829668
+- **mean_time**: 0.0829668
+- **min_time**: 0.0829668
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -57,14 +57,14 @@
 
 ### V3_Buffer
 
-- **all_times**: [0.19856679999999982]
-- **avg_memory_mb**: 198.51953125
+- **all_times**: [0.16867100000000002]
+- **avg_memory_mb**: 197.2265625
 - **category**: vector
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 0.1985668
-- **mean_time**: 0.1985668
-- **min_time**: 0.1985668
+- **max_time**: 0.168671
+- **mean_time**: 0.168671
+- **min_time**: 0.168671
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -74,14 +74,14 @@
 
 ### V4_Intersect
 
-- **all_times**: [0.4373631000000002]
-- **avg_memory_mb**: 202.1953125
+- **all_times**: [0.35460550000000035]
+- **avg_memory_mb**: 200.734375
 - **category**: vector
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 0.4373631
-- **mean_time**: 0.4373631
-- **min_time**: 0.4373631
+- **max_time**: 0.3546055
+- **mean_time**: 0.3546055
+- **min_time**: 0.3546055
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -91,14 +91,14 @@
 
 ### V5_SpatialJoin
 
-- **all_times**: [1.6845708999999998]
-- **avg_memory_mb**: 238.0625
+- **all_times**: [1.2703439000000003]
+- **avg_memory_mb**: 236.3828125
 - **category**: vector
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 1.6845709
-- **mean_time**: 1.6845709
-- **min_time**: 1.6845709
+- **max_time**: 1.2703439
+- **mean_time**: 1.2703439
+- **min_time**: 1.2703439
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -108,14 +108,14 @@
 
 ### V6_CalculateField
 
-- **all_times**: [1.4162168]
-- **avg_memory_mb**: 238.4375
+- **all_times**: [1.1531797]
+- **avg_memory_mb**: 236.72265625
 - **category**: vector
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 1.4162168
-- **mean_time**: 1.4162168
-- **min_time**: 1.4162168
+- **max_time**: 1.1531797
+- **mean_time**: 1.1531797
+- **min_time**: 1.1531797
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -125,14 +125,14 @@
 
 ### R1_CreateConstantRaster
 
-- **all_times**: [0.17679169999999989]
-- **avg_memory_mb**: 238.57421875
+- **all_times**: [0.13902709999999985]
+- **avg_memory_mb**: 236.87109375
 - **category**: raster
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 0.1767917
-- **mean_time**: 0.1767917
-- **min_time**: 0.1767917
+- **max_time**: 0.1390271
+- **mean_time**: 0.1390271
+- **min_time**: 0.1390271
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -142,14 +142,14 @@
 
 ### R2_Resample
 
-- **all_times**: [0.2599741999999994]
-- **avg_memory_mb**: 244.2109375
+- **all_times**: [0.22504230000000014]
+- **avg_memory_mb**: 242.6015625
 - **category**: raster
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 0.2599742
-- **mean_time**: 0.2599742
-- **min_time**: 0.2599742
+- **max_time**: 0.2250423
+- **mean_time**: 0.2250423
+- **min_time**: 0.2250423
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -159,14 +159,14 @@
 
 ### R3_Clip
 
-- **all_times**: [0.3209376000000006]
-- **avg_memory_mb**: 244.7734375
+- **all_times**: [0.2876033000000007]
+- **avg_memory_mb**: 243.3203125
 - **category**: raster
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 0.3209376
-- **mean_time**: 0.3209376
-- **min_time**: 0.3209376
+- **max_time**: 0.2876033
+- **mean_time**: 0.2876033
+- **min_time**: 0.2876033
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -176,14 +176,14 @@
 
 ### R4_RasterCalculator
 
-- **all_times**: [0.4565587999999998]
-- **avg_memory_mb**: 244.83984375
+- **all_times**: [0.4234636999999992]
+- **avg_memory_mb**: 243.34375
 - **category**: raster
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 0.4565588
-- **mean_time**: 0.4565588
-- **min_time**: 0.4565588
+- **max_time**: 0.4234637
+- **mean_time**: 0.4234637
+- **min_time**: 0.4234637
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -193,14 +193,14 @@
 
 ### M1_PolygonToRaster
 
-- **all_times**: [1.0482677999999996]
-- **avg_memory_mb**: 246.23828125
+- **all_times**: [0.8909500999999995]
+- **avg_memory_mb**: 245.0859375
 - **category**: mixed
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 1.0482678
-- **mean_time**: 1.0482678
-- **min_time**: 1.0482678
+- **max_time**: 0.8909501
+- **mean_time**: 0.8909501
+- **min_time**: 0.8909501
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True
@@ -210,14 +210,14 @@
 
 ### M2_RasterToPoint
 
-- **all_times**: [15.3936919]
-- **avg_memory_mb**: 247.92578125
+- **all_times**: [13.8438895]
+- **avg_memory_mb**: 246.3671875
 - **category**: mixed
 - **cv_percent**: 0.0
 - **failed_runs**: 0
-- **max_time**: 15.3936919
-- **mean_time**: 15.3936919
-- **min_time**: 15.3936919
+- **max_time**: 13.8438895
+- **mean_time**: 13.8438895
+- **min_time**: 13.8438895
 - **python_version**: 2.7.16
 - **std_time**: 0
 - **success**: True

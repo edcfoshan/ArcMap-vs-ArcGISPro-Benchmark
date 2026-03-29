@@ -408,6 +408,8 @@ class SimpleBenchmarkGUI(object):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
             
@@ -451,9 +453,26 @@ class SimpleBenchmarkGUI(object):
         thread.daemon = True
         thread.start()
     
+    def _cleanup_old_test_data(self):
+        """Clean up old test data in C:\temp\arcgis_benchmark_data"""
+        temp_data_dir = r"C:\temp\arcgis_benchmark_data"
+        if os.path.exists(temp_data_dir):
+            self._log("清理旧的测试数据: {}".format(temp_data_dir))
+            try:
+                shutil.rmtree(temp_data_dir, ignore_errors=True)
+                self._log("✓ 旧测试数据已清理")
+            except Exception as e:
+                self._log("  警告: 清理旧数据时出错: {}".format(str(e)), "warning")
+                # Continue anyway, data generation will handle it
+        else:
+            self._log("无旧测试数据需要清理")
+    
     def _run_full_test_sequence(self):
         """Run complete test sequence"""
         try:
+            # Clean up old test data before starting
+            self._cleanup_old_test_data()
+            
             # Apply settings
             self._apply_settings()
             

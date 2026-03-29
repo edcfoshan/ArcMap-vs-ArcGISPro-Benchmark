@@ -1,5 +1,5 @@
 % ArcGIS Python Performance Comparison
-% Generated on 2026-03-29 19:26:26
+% Generated on 2026-03-29 19:37:13
 
 \begin{table}[htbp]
 \centering
@@ -9,9 +9,9 @@
 \textbf{Metric} & \textbf{Value} \\
 \hline
 Total Tests & 12 \\
-Python 3.x Faster & 5 (41.7\%) \\
-Python 2.7 Faster & 6 (50.0\%) \\
-Average Speedup & 0.97x \\
+Python 3.x Faster & 4 (33.3\%) \\
+Python 2.7 Faster & 7 (58.3\%) \\
+Average Speedup & 0.88x \\
 \hline
 \end{tabular}
 \label{tab:summary_stats}
@@ -24,18 +24,18 @@ Average Speedup & 0.97x \\
 \hline
 \textbf{Test} & \textbf{Category} & \textbf{Py2.7 (s)} & \textbf{Py3.x (s)} & \textbf{Speedup} & \textbf{Faster} \\
 \hline
-M1\_PolygonToRaster & mixed & 1.05$\pm$0.00 & 0.73$\pm$0.00 & 1.44x & Python\ 3.x \\
-M2\_RasterToPoint & mixed & 15.39$\pm$0.00 & 9.95$\pm$0.00 & 1.55x & Python\ 3.x \\
-R1\_CreateConstantRaster & raster & 0.18$\pm$0.00 & 1.23$\pm$0.00 & 0.14x & Python\ 2.7 \\
-R2\_Resample & raster & 0.26$\pm$0.00 & 0.45$\pm$0.00 & 0.57x & Python\ 2.7 \\
-R3\_Clip & raster & 0.32$\pm$0.00 & 0.30$\pm$0.00 & 1.08x & Python\ 3.x \\
-R4\_RasterCalculator & raster & 0.46$\pm$0.00 & 0.54$\pm$0.00 & 0.85x & Python\ 2.7 \\
-V1\_CreateFishnet & vector & 0.66$\pm$0.00 & 0.80$\pm$0.00 & 0.83x & Python\ 2.7 \\
-V2\_CreateRandomPoints & vector & 0.10$\pm$0.00 & 0.14$\pm$0.00 & 0.72x & Python\ 2.7 \\
-V3\_Buffer & vector & 0.20$\pm$0.00 & 0.27$\pm$0.00 & 0.74x & Python\ 2.7 \\
-V4\_Intersect & vector & 0.44$\pm$0.00 & 0.31$\pm$0.00 & 1.41x & Python\ 3.x \\
-V5\_SpatialJoin & vector & 1.68$\pm$0.00 & 1.68$\pm$0.00 & 1.01x & Equal \\
-V6\_CalculateField & vector & 1.42$\pm$0.00 & 1.08$\pm$0.00 & 1.31x & Python\ 3.x \\
+M1\_PolygonToRaster & mixed & 0.89$\pm$0.00 & 0.69$\pm$0.00 & 1.28x & Python\ 3.x \\
+M2\_RasterToPoint & mixed & 13.84$\pm$0.00 & 9.49$\pm$0.00 & 1.46x & Python\ 3.x \\
+R1\_CreateConstantRaster & raster & 0.14$\pm$0.00 & 1.19$\pm$0.00 & 0.12x & Python\ 2.7 \\
+R2\_Resample & raster & 0.23$\pm$0.00 & 0.41$\pm$0.00 & 0.55x & Python\ 2.7 \\
+R3\_Clip & raster & 0.29$\pm$0.00 & 0.29$\pm$0.00 & 1.00x & Equal \\
+R4\_RasterCalculator & raster & 0.42$\pm$0.00 & 0.49$\pm$0.00 & 0.87x & Python\ 2.7 \\
+V1\_CreateFishnet & vector & 0.57$\pm$0.00 & 0.73$\pm$0.00 & 0.78x & Python\ 2.7 \\
+V2\_CreateRandomPoints & vector & 0.08$\pm$0.00 & 0.13$\pm$0.00 & 0.64x & Python\ 2.7 \\
+V3\_Buffer & vector & 0.17$\pm$0.00 & 0.26$\pm$0.00 & 0.66x & Python\ 2.7 \\
+V4\_Intersect & vector & 0.35$\pm$0.00 & 0.28$\pm$0.00 & 1.25x & Python\ 3.x \\
+V5\_SpatialJoin & vector & 1.27$\pm$0.00 & 1.48$\pm$0.00 & 0.86x & Python\ 2.7 \\
+V6\_CalculateField & vector & 1.15$\pm$0.00 & 1.05$\pm$0.00 & 1.10x & Python\ 3.x \\
 \hline
 \end{tabular}
 \label{tab:detailed_results}

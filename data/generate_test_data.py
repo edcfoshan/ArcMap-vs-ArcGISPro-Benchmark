@@ -278,8 +278,8 @@ class TestDataGenerator(object):
                 y = random.uniform(y_min, y_max)
                 cursor.insertRow([(x, y)])
         
-        count_p = int(arcpy.GetCount_management("spatial_join_points")[0])
-        count_poly = int(arcpy.GetCount_management("spatial_join_polygons")[0])
+        count_p = int(arcpy.GetCount_management(os.path.join(self.gdb_path, "spatial_join_points"))[0])
+        count_poly = int(arcpy.GetCount_management(os.path.join(self.gdb_path, "spatial_join_polygons"))[0])
         print("  Created: {} points, {} polygons".format(count_p, count_poly))
         return "spatial_join_points", "spatial_join_polygons"
     
@@ -322,9 +322,10 @@ class TestDataGenerator(object):
                 if poly_id > num_records:
                     break
         
-        count = int(arcpy.GetCount_management("calculate_field_fc")[0])
+        fc_path = os.path.join(self.gdb_path, "calculate_field_fc")
+        count = int(arcpy.GetCount_management(fc_path)[0])
         print("  Created: {} records".format(count))
-        return "calc_table"
+        return "calculate_field_fc"
     
     def create_raster_data(self):
         """Create raster test data using pure arcpy"""
