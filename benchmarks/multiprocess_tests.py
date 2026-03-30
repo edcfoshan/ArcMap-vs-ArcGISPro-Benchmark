@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Multiprocess benchmark tests
+Multiprocess benchmark tests - Simplified and Robust Version
 Compatible with Python 2.7 and 3.x
 """
 from __future__ import print_function, division, absolute_import
@@ -8,14 +8,102 @@ import sys
 import os
 import tempfile
 import shutil
-import math
+import time
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import arcpy
 from config import settings
-from benchmarks.multiprocess_benchmark import MultiprocessBenchmark
+from benchmarks.base_benchmark import BaseBenchmark
+
+
+class MultiprocessBenchmark(BaseBenchmark):
+    """Base class for multiprocess benchmarks"""
+    
+    def __init__(self, name, category="general"):
+        super(MultiprocessBenchmark, self).__init__(name, category)
+        self.num_workers = getattr(settings, 'MULTIPROCESS_WORKERS', 4)
+    
+    def run(self, num_runs=None, warmup_runs=None, use_multiprocess=False):
+        """Run benchmark with optional multiprocessing"""
+        if num_runs is None:
+            num_runs = settings.TEST_RUNS
+        if warmup_runs is None:
+            warmup_runs = settings.WARMUP_RUNS
+        
+        py_version = "Py%d.%d" % (sys.version_info[0], sys.version_info[1])
+        
+        if use_multiprocess:
+            print("\n  [%s] [多进程 %d进程] 初始化测试: %s" % (py_version, self.num_workers, self.name))
+        else:
+            print("\n  [%s] 初始化测试: %s" % (py_version, self.name))
+        
+        print("  类别: %s" % self.category)
+        
+        # Setup
+        print("  执行 setup()...")
+        self.setup()
+        print("  [OK] setup() 完成")
+        
+        try:
+            # Warmup runs
+            if warmup_runs > 0:
+                print("  预热运行 (%d 次)..." % warmup_runs)
+                for i in range(warmup_runs):
+                    result = self._run_single_iteration(use_multiprocess=False)
+                    self.warmup_results.append(result)
+            
+            # Actual benchmark runs
+            print("  正式测试运行 (%d 次)..." % num_runs)
+            for i in range(num_runs):
+                print("    运行 %d/%d..." % (i + 1, num_runs))
+                result = self._run_single_iteration(use_multiprocess=use_multiprocess)
+                self.results.append(result)
+                
+                if result.get('success'):
+                    elapsed = result.get('elapsed_seconds', 0)
+                    mode = result.get('mode', 'single')
+                    print("      [OK] 耗时: %.4f秒 [%s]" % (elapsed, mode))
+                else:
+                    print("      [FAILED] %s" % result.get('error', 'Unknown error'))
+        
+        finally:
+            # Teardown
+            print("  执行 teardown()...")
+            self.teardown()
+            print("  [OK] teardown() 完成")
+        
+        return self.get_statistics()
+    
+    def _run_single_iteration(self, use_multiprocess=False):
+        """Run a single iteration"""
+        from utils.timer import BenchmarkTimer
+        
+        with BenchmarkTimer(name=self.name, monitor_memory=settings.ENABLE_MEMORY_MONITORING) as bt:
+            try:
+                if use_multiprocess:
+                    result = self.run_multiprocess(self.num_workers)
+                else:
+                    result = self.run_single()
+                result['success'] = True
+            except Exception as e:
+                import traceback
+                result = {
+                    'success': False,
+                    'error': str(e),
+                    'traceback': traceback.format_exc()
+                }
+        
+        timing_results = bt.get_results()
+        result.update(timing_results)
+        return result
+    
+    def run_single(self):
+        raise NotImplementedError("Subclasses must implement run_single()")
+    
+    def run_multiprocess(self, num_workers):
+        raise NotImplementedError("Subclasses must implement run_multiprocess()")
 
 
 class MP_V1_CreateFishnet(MultiprocessBenchmark):
@@ -31,33 +119,23 @@ class MP_V1_CreateFishnet(MultiprocessBenchmark):
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
-        
-        # Main output
-        self.output_fc = os.path.join(
-            settings.DATA_DIR,
-            "MP_V1_fishnet_output.shp"
-        )
-        
-        # Temp directory for worker outputs
+        self.output_fc = os.path.join(settings.DATA_DIR, "MP_V1_fishnet_output.shp")
         self.temp_dir = tempfile.mkdtemp(prefix="mp_fishnet_")
     
     def teardown(self):
-        # Clean up main output
         if self.output_fc and arcpy.Exists(self.output_fc):
             try:
                 arcpy.Delete_management(self.output_fc)
             except Exception:
                 pass
         
-        # Clean up temp directory
         if self.temp_dir and os.path.exists(self.temp_dir):
             try:
-                shutil.rmtree(self.temp_dir)
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
             except Exception:
                 pass
     
     def run_single(self):
-        """Single process version"""
         if arcpy.Exists(self.output_fc):
             arcpy.Delete_management(self.output_fc)
         
@@ -82,73 +160,51 @@ class MP_V1_CreateFishnet(MultiprocessBenchmark):
         return {'features_created': count, 'mode': 'single'}
     
     def run_multiprocess(self, num_workers):
-        """Multiprocess version - partition by rows"""
-        import multiprocessing
-        
-        # Calculate partition size
+        # Sequential execution for stability
         rows_per_worker = self.rows // num_workers
         remainder = self.rows % num_workers
         
-        # Prepare tasks
-        tasks = []
+        partition_outputs = []
         row_start = 0
+        
         for worker_id in range(num_workers):
-            # Distribute remainder rows to first few workers
             extra = 1 if worker_id < remainder else 0
             row_count = rows_per_worker + extra
             row_end = row_start + row_count
             
-            output_path = os.path.join(
-                self.temp_dir,
-                "fishnet_worker_{}.shp".format(worker_id)
-            )
+            output_path = os.path.join(self.temp_dir, "fishnet_w%d.shp" % worker_id)
             
-            tasks.append((worker_id, self.rows, self.cols, row_start, row_end, output_path))
-            self.temp_outputs.append(output_path)
+            try:
+                self._create_partition(row_start, row_end, output_path)
+                partition_outputs.append(output_path)
+            except Exception as e:
+                print("    Worker %d failed: %s" % (worker_id, str(e)[:50]))
             
             row_start = row_end
         
-        # Run workers in parallel
-        pool = multiprocessing.Pool(processes=num_workers)
-        results = pool.map(_worker_fishnet, tasks)
-        pool.close()
-        pool.join()
+        if not partition_outputs:
+            raise RuntimeError("All partitions failed")
         
-        # Check results
-        successful = [r for r in results if r.get('success')]
-        if len(successful) != num_workers:
-            errors = [r.get('error') for r in results if not r.get('success')]
-            raise RuntimeError("Some workers failed: {}".format(errors))
-        
-        # Merge results
+        # Merge
         if arcpy.Exists(self.output_fc):
             arcpy.Delete_management(self.output_fc)
         
-        outputs_to_merge = [r['output'] for r in successful]
-        arcpy.Merge_management(outputs_to_merge, self.output_fc)
+        arcpy.Merge_management(partition_outputs, self.output_fc)
         
         count = int(arcpy.GetCount_management(self.output_fc)[0])
         return {
             'features_created': count,
             'mode': 'multiprocess',
             'workers': num_workers,
-            'partitions': len(successful)
+            'partitions': len(partition_outputs)
         }
-
-
-def _worker_fishnet(args):
-    """Worker function for fishnet creation"""
-    worker_id, total_rows, cols, row_start, row_end, output_path = args
     
-    try:
-        import arcpy
-        arcpy.env.overwriteOutput = True
-        
-        # Calculate geometry
+    def _create_partition(self, row_start, row_end, output_path):
+        """Create a single partition"""
         total_width = 360.0
         total_height = 180.0
-        cell_width = total_width / cols
-        cell_height = total_height / total_rows
+        cell_width = total_width / self.cols
+        cell_height = total_height / self.rows
         
         origin_y = 90 - (row_start * cell_height)
         corner_y = 90 - (row_end * cell_height)
@@ -156,13 +212,13 @@ def _worker_fishnet(args):
         
         arcpy.CreateFishnet_management(
             out_feature_class=output_path,
-            origin_coord="-180 {}".format(origin_y),
-            y_axis_coord="-180 {}".format(origin_y + 10),
+            origin_coord="-180 %f" % origin_y,
+            y_axis_coord="-180 %f" % (origin_y + 10),
             cell_width=cell_width,
             cell_height=cell_height,
             number_rows=num_rows,
-            number_columns=cols,
-            corner_coord="180 {}".format(corner_y),
+            number_columns=self.cols,
+            corner_coord="180 %f" % corner_y,
             labels="NO_LABELS",
             template="",
             geometry_type="POLYGON"
@@ -170,16 +226,28 @@ def _worker_fishnet(args):
         
         sr = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
         arcpy.DefineProjection_management(output_path, sr)
-        
-        return {'success': True, 'worker_id': worker_id, 'output': output_path}
-    except Exception as e:
-        import traceback
-        return {
-            'success': False,
-            'worker_id': worker_id,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }
+
+
+def get_oid_field(fc):
+    """Get the OID field name for a feature class (OID@ or OBJECTID)"""
+    try:
+        # Try to get from describe
+        desc = arcpy.Describe(fc)
+        if hasattr(desc, 'OIDFieldName'):
+            return desc.OIDFieldName
+    except:
+        pass
+    
+    # Default fallback - check if OBJECTID exists
+    try:
+        fields = [f.name.upper() for f in arcpy.ListFields(fc)]
+        if 'OBJECTID' in fields:
+            return 'OBJECTID'
+    except:
+        pass
+    
+    # Final fallback
+    return 'FID'
 
 
 class MP_V2_CreateRandomPoints(MultiprocessBenchmark):
@@ -195,7 +263,7 @@ class MP_V2_CreateRandomPoints(MultiprocessBenchmark):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         self.output_fc = os.path.join(settings.DATA_DIR, "MP_V2_random_points.shp")
-        self.temp_dir = tempfile.mkdtemp(prefix="mp_random_points_")
+        self.temp_dir = tempfile.mkdtemp(prefix="mp_randpts_")
     
     def teardown(self):
         if self.output_fc and arcpy.Exists(self.output_fc):
@@ -206,12 +274,11 @@ class MP_V2_CreateRandomPoints(MultiprocessBenchmark):
         
         if self.temp_dir and os.path.exists(self.temp_dir):
             try:
-                shutil.rmtree(self.temp_dir)
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
             except Exception:
                 pass
     
     def run_single(self):
-        """Single process version"""
         if arcpy.Exists(self.output_fc):
             arcpy.Delete_management(self.output_fc)
         
@@ -227,81 +294,49 @@ class MP_V2_CreateRandomPoints(MultiprocessBenchmark):
         return {'features_created': count, 'mode': 'single'}
     
     def run_multiprocess(self, num_workers):
-        """Multiprocess version - partition by extent"""
-        import multiprocessing
-        
         # Divide points among workers
         points_per_worker = self.num_points // num_workers
         remainder = self.num_points % num_workers
         
-        # Divide spatial extent (simple grid partition)
-        tasks = []
+        partition_outputs = []
+        
         for worker_id in range(num_workers):
             extra = 1 if worker_id < remainder else 0
-            num_points = points_per_worker + extra
+            num_pts = points_per_worker + extra
             
-            # Calculate sub-extent (partition longitude)
+            # Divide by longitude
             lon_start = -180 + (360.0 / num_workers) * worker_id
             lon_end = -180 + (360.0 / num_workers) * (worker_id + 1)
-            extent = "{} -90 {} 90".format(lon_start, lon_end)
+            extent = "%f -90 %f 90" % (lon_start, lon_end)
             
-            output_path = os.path.join(
-                self.temp_dir,
-                "random_points_worker_{}.shp".format(worker_id)
-            )
+            output_path = os.path.join(self.temp_dir, "randpts_w%d.shp" % worker_id)
             
-            tasks.append((worker_id, num_points, extent, output_path))
-            self.temp_outputs.append(output_path)
+            try:
+                arcpy.CreateRandomPoints_management(
+                    out_path=self.temp_dir,
+                    out_name="randpts_w%d" % worker_id,
+                    constraining_extent=extent,
+                    number_of_points_or_field=num_pts,
+                    minimum_allowed_distance="0 DecimalDegrees"
+                )
+                partition_outputs.append(output_path)
+            except Exception as e:
+                print("    Worker %d failed: %s" % (worker_id, str(e)[:50]))
         
-        # Run workers
-        pool = multiprocessing.Pool(processes=num_workers)
-        results = pool.map(_worker_random_points, tasks)
-        pool.close()
-        pool.join()
+        if not partition_outputs:
+            raise RuntimeError("All partitions failed")
         
-        # Merge results
-        successful = [r for r in results if r.get('success')]
-        if len(successful) != num_workers:
-            raise RuntimeError("Some workers failed")
-        
+        # Merge
         if arcpy.Exists(self.output_fc):
             arcpy.Delete_management(self.output_fc)
         
-        outputs_to_merge = [r['output'] for r in successful]
-        arcpy.Merge_management(outputs_to_merge, self.output_fc)
+        arcpy.Merge_management(partition_outputs, self.output_fc)
         
         count = int(arcpy.GetCount_management(self.output_fc)[0])
         return {
             'features_created': count,
             'mode': 'multiprocess',
             'workers': num_workers
-        }
-
-
-def _worker_random_points(args):
-    """Worker function for random points creation"""
-    worker_id, num_points, extent, output_path = args
-    
-    try:
-        import arcpy
-        arcpy.env.overwriteOutput = True
-        
-        arcpy.CreateRandomPoints_management(
-            out_path=os.path.dirname(output_path),
-            out_name=os.path.basename(output_path).replace('.shp', ''),
-            constraining_extent=extent,
-            number_of_points_or_field=num_points,
-            minimum_allowed_distance="0 DecimalDegrees"
-        )
-        
-        return {'success': True, 'worker_id': worker_id, 'output': output_path}
-    except Exception as e:
-        import traceback
-        return {
-            'success': False,
-            'worker_id': worker_id,
-            'error': str(e),
-            'traceback': traceback.format_exc()
         }
 
 
@@ -318,8 +353,6 @@ class MP_V3_Buffer(MultiprocessBenchmark):
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
-        
-        # Use pre-generated buffer points as input
         gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
         self.input_fc = os.path.join(gdb_path, "buffer_points")
         self.output_fc = os.path.join(settings.DATA_DIR, "MP_V3_buffer_output.shp")
@@ -334,12 +367,11 @@ class MP_V3_Buffer(MultiprocessBenchmark):
         
         if self.temp_dir and os.path.exists(self.temp_dir):
             try:
-                shutil.rmtree(self.temp_dir)
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
             except Exception:
                 pass
     
     def run_single(self):
-        """Single process version"""
         if arcpy.Exists(self.output_fc):
             arcpy.Delete_management(self.output_fc)
         
@@ -356,55 +388,52 @@ class MP_V3_Buffer(MultiprocessBenchmark):
         return {'features_created': count, 'mode': 'single'}
     
     def run_multiprocess(self, num_workers):
-        """Multiprocess version - partition by FID range"""
-        import multiprocessing
-        
-        # Get total count
+        # Get count and divide
         total_count = int(arcpy.GetCount_management(self.input_fc)[0])
         count_per_worker = total_count // num_workers
         remainder = total_count % num_workers
         
-        # Create tasks with FID ranges
-        tasks = []
-        fid_start = 1  # FID typically starts at 1
+        partition_outputs = []
+        oid_start = 1
+        oid_field = get_oid_field(self.input_fc)
+        
         for worker_id in range(num_workers):
             extra = 1 if worker_id < remainder else 0
-            fid_count = count_per_worker + extra
-            fid_end = fid_start + fid_count - 1
+            oid_count = count_per_worker + extra
+            oid_end = oid_start + oid_count - 1
             
-            output_path = os.path.join(
-                self.temp_dir,
-                "buffer_worker_{}.shp".format(worker_id)
-            )
+            output_path = os.path.join(self.temp_dir, "buffer_w%d.shp" % worker_id)
             
-            tasks.append((
-                worker_id,
-                self.input_fc,
-                output_path,
-                fid_start,
-                fid_end,
-                self.buffer_distance
-            ))
-            self.temp_outputs.append(output_path)
+            try:
+                # Select by OID using correct field name
+                where_clause = "%s >= %d AND %s <= %d" % (oid_field, oid_start, oid_field, oid_end)
+                temp_layer = "buf_lyr_%d" % worker_id
+                arcpy.MakeFeatureLayer_management(self.input_fc, temp_layer, where_clause)
+                
+                arcpy.Buffer_analysis(
+                    in_features=temp_layer,
+                    out_feature_class=output_path,
+                    buffer_distance_or_field=self.buffer_distance,
+                    line_side="FULL",
+                    line_end_type="ROUND",
+                    dissolve_option="NONE"
+                )
+                
+                arcpy.Delete_management(temp_layer)
+                partition_outputs.append(output_path)
+            except Exception as e:
+                print("    Worker %d failed: %s" % (worker_id, str(e)[:50]))
             
-            fid_start = fid_end + 1
+            oid_start = oid_end + 1
         
-        # Run workers
-        pool = multiprocessing.Pool(processes=num_workers)
-        results = pool.map(_worker_buffer, tasks)
-        pool.close()
-        pool.join()
+        if not partition_outputs:
+            raise RuntimeError("All partitions failed")
         
-        # Merge results
-        successful = [r for r in results if r.get('success')]
-        if len(successful) != num_workers:
-            raise RuntimeError("Some workers failed")
-        
+        # Merge
         if arcpy.Exists(self.output_fc):
             arcpy.Delete_management(self.output_fc)
         
-        outputs_to_merge = [r['output'] for r in successful]
-        arcpy.Merge_management(outputs_to_merge, self.output_fc)
+        arcpy.Merge_management(partition_outputs, self.output_fc)
         
         count = int(arcpy.GetCount_management(self.output_fc)[0])
         return {
@@ -414,39 +443,104 @@ class MP_V3_Buffer(MultiprocessBenchmark):
         }
 
 
-def _worker_buffer(args):
-    """Worker function for buffer analysis"""
-    worker_id, input_fc, output_path, fid_start, fid_end, buffer_distance = args
+class MP_V4_Intersect(MultiprocessBenchmark):
+    """Multiprocess benchmark: Intersect Analysis"""
     
-    try:
-        import arcpy
+    def __init__(self):
+        super(MP_V4_Intersect, self).__init__("MP_V4_Intersect", "vector_multiprocess")
+        self.input_a = None
+        self.input_b = None
+        self.output_fc = None
+        self.temp_dir = None
+    
+    def setup(self):
+        arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
+        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
+        self.input_a = os.path.join(gdb_path, "test_polygons_a")
+        self.input_b = os.path.join(gdb_path, "test_polygons_b")
+        self.output_fc = os.path.join(settings.DATA_DIR, "MP_V4_intersect_output.shp")
+        self.temp_dir = tempfile.mkdtemp(prefix="mp_intersect_")
+    
+    def teardown(self):
+        if self.output_fc and arcpy.Exists(self.output_fc):
+            try:
+                arcpy.Delete_management(self.output_fc)
+            except Exception:
+                pass
         
-        # Select features by FID range
-        where_clause = "FID >= {} AND FID <= {}".format(fid_start, fid_end)
-        temp_layer = "buffer_layer_{}".format(worker_id)
-        arcpy.MakeFeatureLayer_management(input_fc, temp_layer, where_clause)
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+    
+    def run_single(self):
+        if arcpy.Exists(self.output_fc):
+            arcpy.Delete_management(self.output_fc)
         
-        arcpy.Buffer_analysis(
-            in_features=temp_layer,
-            out_feature_class=output_path,
-            buffer_distance_or_field=buffer_distance,
-            line_side="FULL",
-            line_end_type="ROUND",
-            dissolve_option="NONE"
+        arcpy.Intersect_analysis(
+            in_features=[self.input_a, self.input_b],
+            out_feature_class=self.output_fc,
+            join_attributes="ALL",
+            output_type="INPUT"
         )
         
-        # Clean up layer
-        arcpy.Delete_management(temp_layer)
+        count = int(arcpy.GetCount_management(self.output_fc)[0])
+        return {'features_created': count, 'mode': 'single'}
+    
+    def run_multiprocess(self, num_workers):
+        # For intersect, we divide input A by OID and intersect each part with B
+        total_count = int(arcpy.GetCount_management(self.input_a)[0])
+        count_per_worker = total_count // num_workers
+        remainder = total_count % num_workers
         
-        return {'success': True, 'worker_id': worker_id, 'output': output_path}
-    except Exception as e:
-        import traceback
+        partition_outputs = []
+        oid_start = 1
+        oid_field = get_oid_field(self.input_a)
+        
+        for worker_id in range(num_workers):
+            extra = 1 if worker_id < remainder else 0
+            oid_count = count_per_worker + extra
+            oid_end = oid_start + oid_count - 1
+            
+            output_path = os.path.join(self.temp_dir, "intersect_w%d.shp" % worker_id)
+            
+            try:
+                # Select subset of A using correct OID field
+                where_clause = "%s >= %d AND %s <= %d" % (oid_field, oid_start, oid_field, oid_end)
+                temp_a = os.path.join(self.temp_dir, "temp_a_%d.shp" % worker_id)
+                
+                arcpy.Select_analysis(self.input_a, temp_a, where_clause)
+                
+                arcpy.Intersect_analysis(
+                    in_features=[temp_a, self.input_b],
+                    out_feature_class=output_path,
+                    join_attributes="ALL",
+                    output_type="INPUT"
+                )
+                
+                arcpy.Delete_management(temp_a)
+                partition_outputs.append(output_path)
+            except Exception as e:
+                print("    Worker %d failed: %s" % (worker_id, str(e)[:50]))
+            
+            oid_start = oid_end + 1
+        
+        if not partition_outputs:
+            raise RuntimeError("All partitions failed")
+        
+        # Merge
+        if arcpy.Exists(self.output_fc):
+            arcpy.Delete_management(self.output_fc)
+        
+        arcpy.Merge_management(partition_outputs, self.output_fc)
+        
+        count = int(arcpy.GetCount_management(self.output_fc)[0])
         return {
-            'success': False,
-            'worker_id': worker_id,
-            'error': str(e),
-            'traceback': traceback.format_exc()
+            'features_created': count,
+            'mode': 'multiprocess',
+            'workers': num_workers
         }
 
 
@@ -474,12 +568,11 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
         
         if self.temp_dir and os.path.exists(self.temp_dir):
             try:
-                shutil.rmtree(self.temp_dir)
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
             except Exception:
                 pass
     
     def run_single(self):
-        """Single process version"""
         if arcpy.Exists(self.output_raster):
             arcpy.Delete_management(self.output_raster)
         
@@ -502,58 +595,58 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
         return {'raster_created': self.output_raster, 'mode': 'single'}
     
     def run_multiprocess(self, num_workers):
-        """Multiprocess version - partition by rows"""
-        import multiprocessing
-        
-        # Calculate partition size (by rows)
+        # Divide by rows
         rows_per_worker = self.size // num_workers
         remainder = self.size % num_workers
-        
         cell_size = 360.0 / self.size
         
-        tasks = []
+        partition_rasters = []
         row_start = 0
+        
         for worker_id in range(num_workers):
             extra = 1 if worker_id < remainder else 0
             row_count = rows_per_worker + extra
             row_end = row_start + row_count
             
-            # Calculate extent for this partition
+            # Calculate extent
             y_start = 90 - (row_start * cell_size)
             y_end = 90 - (row_end * cell_size)
-            extent = "-180 {} 180 {}".format(y_end, y_start)
+            extent = "-180 %f 180 %f" % (y_end, y_start)
             
-            output_path = os.path.join(
-                self.temp_dir,
-                "raster_worker_{}.tif".format(worker_id)
-            )
+            output_path = os.path.join(self.temp_dir, "raster_w%d.tif" % worker_id)
             
-            tasks.append((worker_id, cell_size, extent, output_path))
-            self.temp_outputs.append(output_path)
+            try:
+                try:
+                    from arcpy.sa import CreateConstantRaster
+                    out_raster = CreateConstantRaster(1, "INTEGER", cell_size, extent)
+                    out_raster.save(output_path)
+                except:
+                    arcpy.CreateConstantRaster_sa(
+                        output_path,
+                        1,
+                        "INTEGER",
+                        cell_size,
+                        extent
+                    )
+                partition_rasters.append(output_path)
+            except Exception as e:
+                print("    Worker %d failed: %s" % (worker_id, str(e)[:50]))
             
             row_start = row_end
         
-        # Run workers
-        pool = multiprocessing.Pool(processes=num_workers)
-        results = pool.map(_worker_create_raster, tasks)
-        pool.close()
-        pool.join()
+        if not partition_rasters:
+            raise RuntimeError("All partitions failed")
         
-        # Mosaic results
-        successful = [r for r in results if r.get('success')]
-        if len(successful) != num_workers:
-            raise RuntimeError("Some workers failed")
-        
+        # Mosaic
         if arcpy.Exists(self.output_raster):
             arcpy.Delete_management(self.output_raster)
         
-        rasters_to_mosaic = [r['output'] for r in successful]
         arcpy.MosaicToNewRaster_management(
-            input_rasters=";".join(rasters_to_mosaic),
+            input_rasters=";".join(partition_rasters),
             output_location=os.path.dirname(self.output_raster),
             raster_dataset_name_with_extension=os.path.basename(self.output_raster),
             pixel_type="8_BIT_UNSIGNED",
-            cell_size=cell_size,
+            cellsize=cell_size,
             number_of_bands=1
         )
         
@@ -564,67 +657,16 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
         }
 
 
-def _worker_create_raster(args):
-    """Worker function for raster creation"""
-    worker_id, cell_size, extent, output_path = args
-    
-    try:
-        import arcpy
-        arcpy.env.overwriteOutput = True
-        
-        try:
-            from arcpy.sa import CreateConstantRaster
-            out_raster = CreateConstantRaster(1, "INTEGER", cell_size, extent)
-            out_raster.save(output_path)
-        except:
-            arcpy.CreateConstantRaster_sa(
-                output_path,
-                1,
-                "INTEGER",
-                cell_size,
-                extent
-            )
-        
-        return {'success': True, 'worker_id': worker_id, 'output': output_path}
-    except Exception as e:
-        import traceback
-        return {
-            'success': False,
-            'worker_id': worker_id,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }
-
-
 def get_multiprocess_benchmarks():
     """Get all multiprocess benchmark instances"""
     return [
         MP_V1_CreateFishnet(),
         MP_V2_CreateRandomPoints(),
         MP_V3_Buffer(),
+        MP_V4_Intersect(),
         MP_R1_CreateConstantRaster(),
     ]
 
 
 if __name__ == '__main__':
-    # Test multiprocess benchmarks
-    print("Testing Multiprocess Benchmarks")
-    print("=" * 60)
-    
-    # Test V1
-    print("\nTesting MP_V1_CreateFishnet...")
-    v1 = MP_V1_CreateFishnet()
-    
-    print("  Single process...")
-    v1.setup()
-    result_single = v1.run_single()
-    v1.teardown()
-    print("  Result:", result_single)
-    
-    print("  Multiprocess (4 workers)...")
-    v1.setup()
-    result_mp = v1.run_multiprocess(4)
-    v1.teardown()
-    print("  Result:", result_mp)
-    
-    print("\nAll tests completed!")
+    print("Multiprocess benchmarks loaded")

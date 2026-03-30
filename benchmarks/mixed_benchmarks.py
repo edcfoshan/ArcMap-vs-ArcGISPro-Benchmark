@@ -48,7 +48,9 @@ class M1_PolygonToRaster(BaseBenchmark):
         
         gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
         self.input_fc = os.path.join(gdb_path, "test_polygons_a")
-        self.output_raster = os.path.join(settings.DATA_DIR, "M1_poly_to_ras.tif")
+        # Use version-specific output to avoid lock conflicts between Py2/Py3
+        py_version = "py2" if sys.version_info[0] < 3 else "py3"
+        self.output_raster = os.path.join(settings.DATA_DIR, "M1_poly_to_ras_{}.tif".format(py_version))
         
         # Calculate cell size based on data extent
         raster_size = settings.RASTER_CONFIG['constant_raster_size']

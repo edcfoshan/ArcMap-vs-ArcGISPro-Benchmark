@@ -123,7 +123,7 @@ RASTER_CONFIG_LARGE = {
 
 # Select configuration to use
 # Options: 'tiny', 'small', 'standard', 'medium', 'large'
-DATA_SCALE = 'small'
+DATA_SCALE = 'tiny'
 
 # All available scales
 ALL_SCALES = ['tiny', 'small', 'standard', 'medium', 'large']
@@ -152,7 +152,7 @@ else:  # medium (default)
 MULTIPROCESS_CONFIG = {
     'enabled': False,  # Enable multiprocess benchmarks
     'num_workers': 4,  # Number of worker processes
-    'scales': ['standard', 'medium', 'large'],  # Scales to run multiprocess tests
+    'scales': ['tiny', 'small', 'standard', 'medium', 'large'],  # Scales to run multiprocess tests (all supported)
 }
 
 # Get multiprocess settings with defaults

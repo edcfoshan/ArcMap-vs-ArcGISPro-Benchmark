@@ -401,10 +401,10 @@ class TestDataGenerator(object):
                     if updated % batch_size == 0:
                         print("    已更新 {} 条记录...".format(updated))
         
-        # Create random points within fishnet extent
-        # Get extent from fishnet
-        print("  获取渔网范围...")
-        desc = arcpy.Describe("fishnet")
+        # Create random points within the polygons extent (not fishnet extent)
+        # Use the same extent as spatial_join_polygons for consistency
+        print("  获取多边形范围...")
+        desc = arcpy.Describe("spatial_join_polygons")
         extent = desc.extent
         x_min, y_min, x_max, y_max = extent.XMin, extent.YMin, extent.XMax, extent.YMax
         print("  范围: X={:.2f}~{:.2f}, Y={:.2f}~{:.2f}".format(x_min, x_max, y_min, y_max))

@@ -1,13 +1,33 @@
 test_name,category,py2_time,py2_std,py2_success,py3_time,py3_std,py3_success,speedup,faster
-M1_PolygonToRaster,mixed,1.1640885,0,True,0.7934072999923956,0,True,1.4672016504148089,Python 3.x 更快
-M2_RasterToPoint,mixed,14.189563899999998,0,True,9.613787799986312,0,True,1.4759597564677058,Python 3.x 更快
-R1_CreateConstantRaster,raster,0.16704279999999994,0,True,1.3884712000144646,0,True,0.12030699664368966,Python 2.7 更快
-R2_Resample,raster,0.291544,0,True,0.6326435999944806,0,True,0.4608345046129346,Python 2.7 更快
-R3_Clip,raster,0.3568352000000008,0,True,0.4136614000017289,0,True,0.8626262929016567,Python 2.7 更快
-R4_RasterCalculator,raster,0.5216243000000009,0,True,0.7373363000224344,0,True,0.7074442150537411,Python 2.7 更快
-V1_CreateFishnet,vector,0.7906975,0,True,0.8710482000024058,0,True,0.9077540140692745,Python 2.7 更快
-V2_CreateRandomPoints,vector,0.1117471000000001,0,True,0.1979177999892272,0,True,0.5646136931902161,Python 2.7 更快
-V3_Buffer,vector,0.2012176000000001,0,True,0.32636310000088997,0,True,0.6165451915349848,Python 2.7 更快
-V4_Intersect,vector,0.42240249999999957,0,True,0.41532170001300983,0,True,1.0170489526233952,性能相当
-V5_SpatialJoin,vector,1.2331534999999998,0,True,1.9252763999975286,0,True,0.6405072539203113,Python 2.7 更快
-V6_CalculateField,vector,1.3756554000000003,0,True,1.2712801999878138,0,True,1.0821024350203732,Python 3.x 更快
+M1_PolygonToRaster,mixed,1.0905257000000006,0,True,0.6606145999976434,0,True,1.6507744454995255,Python 3.x 更快
+M2_RasterToPoint,mixed,13.395961900000001,0,True,8.938796500005992,0,True,1.4986314880298508,Python 3.x 更快
+Py2_MP_R1_CreateConstantRaster_multiprocess,raster_multiprocess,0.07408990000000415,0,True,0,0,False,0,Python 2.7 更快
+Py2_MP_R1_CreateConstantRaster_single,raster_multiprocess,0.07408990000000415,0,True,0,0,False,0,Python 2.7 更快
+Py2_MP_V1_CreateFishnet_multiprocess,vector_multiprocess,0.4760882500000001,0.38940971480707104,True,0,0,False,0,Python 2.7 更快
+Py2_MP_V1_CreateFishnet_single,vector_multiprocess,0.20073400000000063,0,True,0,0,False,0,Python 2.7 更快
+Py2_MP_V2_CreateRandomPoints_multiprocess,vector_multiprocess,0.25100879999999925,0.24086913678609917,True,0,0,False,0,Python 2.7 更快
+Py2_MP_V2_CreateRandomPoints_single,vector_multiprocess,0.08068859999999844,0,True,0,0,False,0,Python 2.7 更快
+Py2_MP_V3_Buffer_multiprocess,vector_multiprocess,3.6862604999999995,0,True,0,0,False,0,Python 2.7 更快
+Py2_MP_V3_Buffer_single,vector_multiprocess,3.6862604999999995,0,True,0,0,False,0,Python 2.7 更快
+Py2_MP_V4_Intersect_multiprocess,vector_multiprocess,0.33987319999999954,0,True,0,0,False,0,Python 2.7 更快
+Py2_MP_V4_Intersect_single,vector_multiprocess,0.33987319999999954,0,True,0,0,False,0,Python 2.7 更快
+Py3_MP_R1_CreateConstantRaster_multiprocess,raster_multiprocess,0,0,False,0.14908249999280088,0,True,0,Python 2.7 更快
+Py3_MP_R1_CreateConstantRaster_single,raster_multiprocess,0,0,False,0.14908249999280088,0,True,0,Python 2.7 更快
+Py3_MP_V1_CreateFishnet_multiprocess,vector_multiprocess,0,0,False,0.5247438999940641,0.42283486449380797,True,0,Python 2.7 更快
+Py3_MP_V1_CreateFishnet_single,vector_multiprocess,0,0,False,0.22575449998839758,0,True,0,Python 2.7 更快
+Py3_MP_V2_CreateRandomPoints_multiprocess,vector_multiprocess,0,0,False,0.37008665000030305,0.3192056079905634,True,0,Python 2.7 更快
+Py3_MP_V2_CreateRandomPoints_single,vector_multiprocess,0,0,False,0.14437419999740086,0,True,0,Python 2.7 更快
+Py3_MP_V3_Buffer_multiprocess,vector_multiprocess,0,0,False,0.6568662000063341,0,True,0,Python 2.7 更快
+Py3_MP_V3_Buffer_single,vector_multiprocess,0,0,False,0.6568662000063341,0,True,0,Python 2.7 更快
+Py3_MP_V4_Intersect_multiprocess,vector_multiprocess,0,0,False,0.2670145999873057,0,True,0,Python 2.7 更快
+Py3_MP_V4_Intersect_single,vector_multiprocess,0,0,False,0.2670145999873057,0,True,0,Python 2.7 更快
+R1_CreateConstantRaster,raster,0.15386070000000007,0,True,1.1155146999808494,0,True,0.13792798965593325,Python 2.7 更快
+R2_Resample,raster,0.2564013000000003,0,True,0.47200430001248606,0,True,0.5432181443966032,Python 2.7 更快
+R3_Clip,raster,0.31737140000000075,0,True,0.3073257000069134,0,True,1.0326874712816447,性能相当
+R4_RasterCalculator,raster,0.45389130000000044,0,True,0.5163385999912862,0,True,0.8790574634700183,Python 2.7 更快
+V1_CreateFishnet,vector,0.6753775,0,True,0.7100639000127558,0,True,0.9511503119477942,性能相当
+V2_CreateRandomPoints,vector,0.08511650000000004,0,True,0.14469119999557734,0,True,0.5882631424896727,Python 2.7 更快
+V3_Buffer,vector,0.17873910000000004,0,True,0.2637096999969799,0,True,0.6777873548149613,Python 2.7 更快
+V4_Intersect,vector,0.3538709999999998,0,True,0.28497340000467375,0,True,1.2417685299547119,Python 3.x 更快
+V5_SpatialJoin,vector,1.0736854999999998,0,True,1.6380674999963958,0,True,0.6554586425787474,Python 2.7 更快
+V6_CalculateField,vector,1.1907050999999997,0,True,1.068926800013287,0,True,1.1139257617876164,Python 3.x 更快

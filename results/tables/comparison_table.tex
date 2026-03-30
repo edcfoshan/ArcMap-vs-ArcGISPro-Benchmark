@@ -1,5 +1,5 @@
 % ArcGIS Python Performance Comparison
-% Generated on 2026-03-29 23:32:08
+% Generated on 2026-03-30 08:34:04
 
 \begin{table}[htbp]
 \centering
@@ -8,10 +8,10 @@
 \hline
 \textbf{Metric} & \textbf{Value} \\
 \hline
-Total Tests & 12 \\
-Python 3.x Faster & 3 (25.0\%) \\
-Python 2.7 Faster & 8 (66.7\%) \\
-Average Speedup & 0.83x \\
+Total Tests & 32 \\
+Python 3.x Faster & 4 (12.5\%) \\
+Python 2.7 Faster & 26 (81.2\%) \\
+Average Speedup & 0.91x \\
 \hline
 \end{tabular}
 \label{tab:summary_stats}
@@ -24,18 +24,38 @@ Average Speedup & 0.83x \\
 \hline
 \textbf{Test} & \textbf{Category} & \textbf{Py2.7 (s)} & \textbf{Py3.x (s)} & \textbf{Speedup} & \textbf{Faster} \\
 \hline
-M1\_PolygonToRaster & mixed & 1.16$\pm$0.00 & 0.79$\pm$0.00 & 1.47x & Python\ 3.x\ 更快 \\
-M2\_RasterToPoint & mixed & 14.19$\pm$0.00 & 9.61$\pm$0.00 & 1.48x & Python\ 3.x\ 更快 \\
-R1\_CreateConstantRaster & raster & 0.17$\pm$0.00 & 1.39$\pm$0.00 & 0.12x & Python\ 2.7\ 更快 \\
-R2\_Resample & raster & 0.29$\pm$0.00 & 0.63$\pm$0.00 & 0.46x & Python\ 2.7\ 更快 \\
-R3\_Clip & raster & 0.36$\pm$0.00 & 0.41$\pm$0.00 & 0.86x & Python\ 2.7\ 更快 \\
-R4\_RasterCalculator & raster & 0.52$\pm$0.00 & 0.74$\pm$0.00 & 0.71x & Python\ 2.7\ 更快 \\
-V1\_CreateFishnet & vector & 0.79$\pm$0.00 & 0.87$\pm$0.00 & 0.91x & Python\ 2.7\ 更快 \\
-V2\_CreateRandomPoints & vector & 0.11$\pm$0.00 & 0.20$\pm$0.00 & 0.56x & Python\ 2.7\ 更快 \\
-V3\_Buffer & vector & 0.20$\pm$0.00 & 0.33$\pm$0.00 & 0.62x & Python\ 2.7\ 更快 \\
-V4\_Intersect & vector & 0.42$\pm$0.00 & 0.42$\pm$0.00 & 1.02x & 性能相当 \\
-V5\_SpatialJoin & vector & 1.23$\pm$0.00 & 1.93$\pm$0.00 & 0.64x & Python\ 2.7\ 更快 \\
-V6\_CalculateField & vector & 1.38$\pm$0.00 & 1.27$\pm$0.00 & 1.08x & Python\ 3.x\ 更快 \\
+M1\_PolygonToRaster & mixed & 1.09$\pm$0.00 & 0.66$\pm$0.00 & 1.65x & Python\ 3.x\ 更快 \\
+M2\_RasterToPoint & mixed & 13.40$\pm$0.00 & 8.94$\pm$0.00 & 1.50x & Python\ 3.x\ 更快 \\
+Py2\_MP\_R1\_CreateConstantRaster\_multiprocess & raster_multiprocess & 0.07$\pm$0.00 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_R1\_CreateConstantRaster\_single & raster_multiprocess & 0.07$\pm$0.00 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_V1\_CreateFishnet\_multiprocess & vector_multiprocess & 0.48$\pm$0.39 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_V1\_CreateFishnet\_single & vector_multiprocess & 0.20$\pm$0.00 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_V2\_CreateRandomPoints\_multiprocess & vector_multiprocess & 0.25$\pm$0.24 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_V2\_CreateRandomPoints\_single & vector_multiprocess & 0.08$\pm$0.00 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_V3\_Buffer\_multiprocess & vector_multiprocess & 3.69$\pm$0.00 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_V3\_Buffer\_single & vector_multiprocess & 3.69$\pm$0.00 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_V4\_Intersect\_multiprocess & vector_multiprocess & 0.34$\pm$0.00 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py2\_MP\_V4\_Intersect\_single & vector_multiprocess & 0.34$\pm$0.00 & N/A & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_R1\_CreateConstantRaster\_multiprocess & raster_multiprocess & N/A & 0.15$\pm$0.00 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_R1\_CreateConstantRaster\_single & raster_multiprocess & N/A & 0.15$\pm$0.00 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_V1\_CreateFishnet\_multiprocess & vector_multiprocess & N/A & 0.52$\pm$0.42 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_V1\_CreateFishnet\_single & vector_multiprocess & N/A & 0.23$\pm$0.00 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_V2\_CreateRandomPoints\_multiprocess & vector_multiprocess & N/A & 0.37$\pm$0.32 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_V2\_CreateRandomPoints\_single & vector_multiprocess & N/A & 0.14$\pm$0.00 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_V3\_Buffer\_multiprocess & vector_multiprocess & N/A & 0.66$\pm$0.00 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_V3\_Buffer\_single & vector_multiprocess & N/A & 0.66$\pm$0.00 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_V4\_Intersect\_multiprocess & vector_multiprocess & N/A & 0.27$\pm$0.00 & 0.00x & Python\ 2.7\ 更快 \\
+Py3\_MP\_V4\_Intersect\_single & vector_multiprocess & N/A & 0.27$\pm$0.00 & 0.00x & Python\ 2.7\ 更快 \\
+R1\_CreateConstantRaster & raster & 0.15$\pm$0.00 & 1.12$\pm$0.00 & 0.14x & Python\ 2.7\ 更快 \\
+R2\_Resample & raster & 0.26$\pm$0.00 & 0.47$\pm$0.00 & 0.54x & Python\ 2.7\ 更快 \\
+R3\_Clip & raster & 0.32$\pm$0.00 & 0.31$\pm$0.00 & 1.03x & 性能相当 \\
+R4\_RasterCalculator & raster & 0.45$\pm$0.00 & 0.52$\pm$0.00 & 0.88x & Python\ 2.7\ 更快 \\
+V1\_CreateFishnet & vector & 0.68$\pm$0.00 & 0.71$\pm$0.00 & 0.95x & 性能相当 \\
+V2\_CreateRandomPoints & vector & 0.09$\pm$0.00 & 0.14$\pm$0.00 & 0.59x & Python\ 2.7\ 更快 \\
+V3\_Buffer & vector & 0.18$\pm$0.00 & 0.26$\pm$0.00 & 0.68x & Python\ 2.7\ 更快 \\
+V4\_Intersect & vector & 0.35$\pm$0.00 & 0.28$\pm$0.00 & 1.24x & Python\ 3.x\ 更快 \\
+V5\_SpatialJoin & vector & 1.07$\pm$0.00 & 1.64$\pm$0.00 & 0.66x & Python\ 2.7\ 更快 \\
+V6\_CalculateField & vector & 1.19$\pm$0.00 & 1.07$\pm$0.00 & 1.11x & Python\ 3.x\ 更快 \\
 \hline
 \end{tabular}
 \label{tab:detailed_results}

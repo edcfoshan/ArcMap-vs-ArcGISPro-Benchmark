@@ -236,6 +236,9 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers):
     
     from benchmarks.multiprocess_tests import get_multiprocess_benchmarks
     
+    # Determine Python version prefix for naming
+    py_version = "Py{}".format(sys.version_info[0])
+    
     mp_benchmarks = get_multiprocess_benchmarks()
     mp_results = []
     
@@ -254,6 +257,9 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers):
                                          use_multiprocess=False)
             benchmark.teardown()
             
+            # Add Python version prefix to test name
+            stats_single['test_name'] = "{}_{}_single".format(py_version, benchmark.name)
+            
             if stats_single.get('success'):
                 print("    [OK] Single process: {:.4f}s".format(stats_single.get('mean_time', 0)))
             else:
@@ -261,7 +267,7 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers):
         except Exception as e:
             print("    [ERROR] Single process: {}".format(str(e)))
             stats_single = {
-                'test_name': benchmark.name + '_single',
+                'test_name': "{}_{}_single".format(py_version, benchmark.name),
                 'success': False,
                 'error': str(e)
             }
@@ -275,6 +281,9 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers):
             stats_mp = benchmark.run(num_runs=num_runs, warmup_runs=warmup_runs,
                                      use_multiprocess=True)
             benchmark.teardown()
+            
+            # Add Python version prefix to test name
+            stats_mp['test_name'] = "{}_{}_multiprocess".format(py_version, benchmark.name)
             
             if stats_mp.get('success'):
                 print("    [OK] Multiprocess: {:.4f}s".format(stats_mp.get('mean_time', 0)))
@@ -290,7 +299,7 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers):
         except Exception as e:
             print("    [ERROR] Multiprocess: {}".format(str(e)))
             stats_mp = {
-                'test_name': benchmark.name + '_multiprocess',
+                'test_name': "{}_{}_multiprocess".format(py_version, benchmark.name),
                 'success': False,
                 'error': str(e)
             }

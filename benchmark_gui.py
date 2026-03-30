@@ -91,6 +91,16 @@ class SimpleBenchmarkGUI(object):
         
         # Scale selection
         ttk.Label(settings_frame, text="数据规模:", font=("Microsoft YaHei", 10)).pack(side=tk.LEFT, padx=5)
+        
+        # Scale data mapping
+        self.scale_data = {
+            'tiny': {'name': '超小', 'fishnet': '2,500', 'raster': '25万', 'time': '1-2分钟'},
+            'small': {'name': '小型', 'fishnet': '10,000', 'raster': '100万', 'time': '5-10分钟'},
+            'standard': {'name': '标准', 'fishnet': '250,000', 'raster': '2,500万', 'time': '15-30分钟'},
+            'medium': {'name': '中型', 'fishnet': '1,000,000', 'raster': '1亿', 'time': '30-60分钟'},
+            'large': {'name': '大型', 'fishnet': '25,000,000', 'raster': '9亿', 'time': '2-4小时'}
+        }
+        
         scale_combo = ttk.Combobox(
             settings_frame,
             textvariable=self.data_scale_var,
@@ -101,10 +111,10 @@ class SimpleBenchmarkGUI(object):
         )
         scale_combo.pack(side=tk.LEFT, padx=5)
         
-        # Scale description
+        # Scale description with data volume
         self.scale_desc_label = ttk.Label(
             settings_frame,
-            text="超小: 极速验证，约1-2分钟",
+            text="超小: 渔网2,500 | 栅格25万 | 1-2分钟",
             font=("Microsoft YaHei", 9),
             foreground="blue"
         )
@@ -256,15 +266,12 @@ class SimpleBenchmarkGUI(object):
         self.progress.pack(side=tk.RIGHT, padx=5, pady=3)
     
     def _update_scale_desc(self, event=None):
-        """Update scale description"""
+        """Update scale description with data volume"""
         scale = self.data_scale_var.get()
-        descs = {
-            'tiny': '超小: 极速验证，约1-2分钟',
-            'small': '小型: 快速测试，数据量为标准1/10',
-            'medium': '中型: 标准测试规模（推荐）',
-            'large': '大型: 学术论文级别，耗时较长'
-        }
-        self.scale_desc_label.config(text=descs.get(scale, ''))
+        data = self.scale_data.get(scale, {})
+        if data:
+            text = "{name}: 渔网{fishnet} | 栅格{raster} | {time}".format(**data)
+            self.scale_desc_label.config(text=text)
     
     def _log_banner(self):
         """Display welcome banner"""
@@ -681,40 +688,10 @@ MULTIPROCESS_CONFIG = {{
             if not self._step5_analyze():
                 return False
             
-            # Step 6: Multiprocess benchmarks (if enabled and applicable)
-            if self.should_stop:
-                return False
-            if self.mp_var.get() and scale in ['standard', 'medium', 'large']:
-                if not self._step6_multiprocess_test():
-                    self._log_warning("多进程测试失败，但主测试已完成")
-            
             return True
             
         except Exception as e:
             self._log_error("测试过程错误: {}".format(str(e)))
-            return False
-    
-    def _step6_multiprocess_test(self):
-        """Step 6: Run multiprocess comparison benchmarks"""
-        self._log_section("步骤 6/6: 多进程对比测试")
-        
-        try:
-            mp_workers = int(self.mp_workers_var.get())
-            self._log("进程数: {}".format(mp_workers))
-            
-            # Run with Python 3.x (multiprocess works better with Py3)
-            cmd = [
-                PYTHON3_PATH,
-                os.path.join(SCRIPT_DIR, "run_benchmarks.py"),
-                "--multiprocess",
-                "--mp-workers", str(mp_workers),
-                "--category", "all"
-            ]
-            
-            return self._run_command(cmd, "多进程对比测试")
-            
-        except Exception as e:
-            self._log_error("多进程测试失败: {}".format(str(e)))
             return False
     
     def _generate_all_scales_report(self, all_scale_results):
@@ -1054,7 +1031,7 @@ MULTIPROCESS_CONFIG = {{
             return False
     
     def _step3_py27_test(self):
-        """Step 3: Python 2.7 test"""
+        """Step 3: Python 2.7 test (单进程 + 多进程)"""
         if not os.path.exists(PYTHON27_PATH):
             self._log_error("Python 2.7 未找到")
             return False
@@ -1064,6 +1041,11 @@ MULTIPROCESS_CONFIG = {{
         
         cmd = [PYTHON27_PATH, os.path.join(SCRIPT_DIR, "run_benchmarks.py")]
         
+        # 多进程测试
+        if self.mp_var.get():
+            cmd.extend(["--multiprocess", "--mp-workers", str(self.mp_workers_var.get())])
+            self._log("已启用多进程对比测试（{}进程）".format(self.mp_workers_var.get()))
+        
         if self._run_command(cmd, "Python 2.7 测试"):
             self._log_success("Python 2.7 测试完成")
             return True
@@ -1072,7 +1054,7 @@ MULTIPROCESS_CONFIG = {{
             return False
     
     def _step4_py3_test(self):
-        """Step 4: Python 3.x test"""
+        """Step 4: Python 3.x test (单进程 + 多进程)"""
         if not os.path.exists(PYTHON3_PATH):
             self._log_error("Python 3.x 未找到")
             return False
@@ -1081,6 +1063,11 @@ MULTIPROCESS_CONFIG = {{
         self._log("测试项目: V1-V6 矢量测试, R1-R4 栅格测试, M1-M2 混合测试")
         
         cmd = [PYTHON3_PATH, os.path.join(SCRIPT_DIR, "run_benchmarks.py")]
+        
+        # 多进程测试
+        if self.mp_var.get():
+            cmd.extend(["--multiprocess", "--mp-workers", str(self.mp_workers_var.get())])
+            self._log("已启用多进程对比测试（{}进程）".format(self.mp_workers_var.get()))
         
         if self._run_command(cmd, "Python 3.x 测试"):
             self._log_success("Python 3.x 测试完成")
