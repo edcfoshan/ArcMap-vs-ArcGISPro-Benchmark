@@ -138,6 +138,12 @@ TRANSLATIONS = {
         'label_scale': '数据规模:',
         'label_workers': '多进程Worker数:',
 
+        'label_data_dir': '涓存椂鏁版嵁鐩綍:',
+        'label_os_status': '寮€婧愬簱鐘舵€?:',
+
+        'label_data_dir': '\u4e34\u65f6\u6570\u636e\u76ee\u5f55:',
+        'label_os_status': '\u5f00\u6e90\u5e93\u72b6\u6001:',
+
         # Checkboxes
         'chk_multiprocess': '启用多进程测试',
         'chk_opensource': '启用开源库测试',
@@ -148,11 +154,17 @@ TRANSLATIONS = {
 
         # Buttons
         'btn_run': '开始测试',
-        'btn_run_all': '五级连跑',
         'btn_stop': '停止测试',
         'btn_open_temp': '打开生成结果文件夹',
         'btn_save_settings': '保存设置',
         'btn_reset': '恢复默认',
+
+        'btn_advanced_settings': '楂樼骇璁剧疆',
+        'btn_recheck': '閲嶆柊妫€娴?',
+
+        'btn_advanced_settings': '\u9ad8\u7ea7\u8bbe\u7f6e',
+        'btn_recheck': '\u91cd\u65b0\u68c0\u6d4b',
+        'btn_install_os': '\u5b89\u88c5\u5f00\u6e90\u5e93',
 
         # Status
         'status_ready': '就绪',
@@ -240,6 +252,9 @@ TRANSLATIONS = {
         'label_scale': 'Data Scale:',
         'label_workers': 'MP Workers:',
 
+        'label_data_dir': 'Temp Data Dir:',
+        'label_os_status': 'Open-source status:',
+
         # Checkboxes
         'chk_multiprocess': 'Enable Multiprocess Tests',
         'chk_opensource': 'Enable Open-Source Tests',
@@ -250,11 +265,14 @@ TRANSLATIONS = {
 
         # Buttons
         'btn_run': 'Run Tests',
-        'btn_run_all': 'Run All Scales',
         'btn_stop': 'Stop',
         'btn_open_temp': 'Open Generated Results Folder',
         'btn_save_settings': 'Save Settings',
         'btn_reset': 'Reset Default',
+
+        'btn_advanced_settings': 'Advanced Settings',
+        'btn_recheck': 'Re-check',
+        'btn_install_os': 'Install Open-Source Packages',
 
         # Status
         'status_ready': 'Ready',

@@ -52,6 +52,7 @@ DEFAULT_ARCPY_REGULAR_BENCHMARKS = 12
 DEFAULT_ARCPY_MULTIPROCESS_BENCHMARKS = 5
 DEFAULT_OS_REGULAR_BENCHMARKS = 12
 DEFAULT_OS_MULTIPROCESS_BENCHMARKS = 3
+OPEN_SOURCE_PACKAGES = ('geopandas', 'rasterio', 'shapely', 'pyogrio', 'numpy')
 
 
 class ModernButton(tk.Canvas):
@@ -178,7 +179,7 @@ class CardFrame(tk.Frame):
         if title:
             self.title_label = tk.Label(
                 self, text=title, bg=COLORS['bg_secondary'],
-                fg=COLORS['accent_primary'], font=('Microsoft YaHei', 14, 'bold'),
+                fg=COLORS['accent_primary'], font=('Microsoft YaHei', 13, 'bold'),
                 anchor='w', padx=15, pady=10
             )
             self.title_label.pack(fill='x')
@@ -316,6 +317,12 @@ class SettingsDialog(tk.Toplevel):
         tk.Label(warmup_row, text=self.sm.get_text('label_warmup'), bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
         self.warmup_var = tk.IntVar(value=self.sm.get('test_settings.warmup', 1))
         tk.Spinbox(warmup_row, from_=0, to=5, textvariable=self.warmup_var, width=8, font=('Microsoft YaHei', 10)).pack(side=tk.LEFT, padx=5)
+
+        workers_row = tk.Frame(test_frame, bg=COLORS['bg_secondary'])
+        workers_row.pack(fill=tk.X, pady=2)
+        tk.Label(workers_row, text=self.sm.get_text('label_workers'), bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
+        self.workers_var = tk.IntVar(value=self.sm.get('test_settings.mp_workers', 4))
+        tk.Spinbox(workers_row, from_=1, to=16, textvariable=self.workers_var, width=8, font=('Microsoft YaHei', 10)).pack(side=tk.LEFT, padx=5)
 
         # 选项复选框
         self.mp_var = tk.BooleanVar(value=self.sm.get('test_settings.enable_multiprocess', False))
@@ -571,11 +578,17 @@ class ModernBenchmarkGUI(object):
         self.completed_tests = 0
         self.total_tests = 0
         self.test_queue = []
+        self.current_output_dir = ''
+        self.os_available = False
+        self.os_missing_modules = []
+        self.os_status_reason = ''
+        self.os_installing = False
 
         self._setup_window()
         self._create_styles()
         self._create_ui()
         self._update_language()
+        self._refresh_opensource_support()
 
     def _setup_window(self):
         """设置窗口"""
@@ -640,6 +653,38 @@ class ModernBenchmarkGUI(object):
         weight = 'bold' if bold else 'normal'
         return ('Microsoft YaHei', scaled_size, weight)
 
+    def _create_scrollable_sidebar(self, parent):
+        """创建可滚动的左侧栏容器。"""
+        sidebar = tk.Frame(parent, bg=COLORS['bg_primary'])
+        sidebar.pack(side='left', fill='y', padx=(0, 15))
+        sidebar_width = max(int(500 * self.font_scale), 420)
+        sidebar.config(width=sidebar_width)
+        sidebar.pack_propagate(False)
+
+        canvas = tk.Canvas(sidebar, bg=COLORS['bg_primary'], highlightthickness=0, bd=0)
+        scrollbar = tk.Scrollbar(sidebar, orient='vertical', command=canvas.yview)
+        content = tk.Frame(canvas, bg=COLORS['bg_primary'])
+
+        window_id = canvas.create_window((0, 0), window=content, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _update_scrollregion(event=None):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+
+        def _update_content_width(event):
+            canvas.itemconfig(window_id, width=event.width)
+
+        content.bind('<Configure>', _update_scrollregion)
+        canvas.bind('<Configure>', _update_content_width)
+
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        self.sidebar_canvas = canvas
+        self.sidebar_content = content
+        self.sidebar_scrollbar = scrollbar
+        return content
+
     def _create_big_checkbox(self, parent, text, variable):
         """创建大号复选框，使用浅色背景让勾选更明显"""
         frame = tk.Frame(parent, bg='white')
@@ -648,11 +693,234 @@ class ModernBenchmarkGUI(object):
         # 使用更大的指示器大小和浅色选中背景
         cb = tk.Checkbutton(frame, text=text, variable=variable,
                            bg='white', fg=COLORS['text_primary'],
-                           font=self._font(15), selectcolor='#e3f2fd',  # 浅蓝色背景
+                           font=self._font(12), selectcolor='#e3f2fd',  # 浅蓝色背景
                            activebackground='white', cursor='hand2',
                            height=1, anchor='w', padx=5, pady=3)
         cb.pack(anchor='w', fill='x')
         return cb
+
+    def _browse_python_path(self, variable, title=None):
+        """选择 Python 可执行文件路径。"""
+        filename = filedialog.askopenfilename(
+            title=title or self.sm.get_text('label_python27'),
+            filetypes=[("Python Executable", "python.exe"), ("All Files", "*.*")]
+        )
+        if filename:
+            variable.set(filename)
+            if hasattr(self, 'py3_var') and variable is self.py3_var:
+                self._refresh_opensource_support()
+
+    def _browse_directory(self, variable):
+        """选择目录。"""
+        dirname = filedialog.askdirectory(title=self.sm.get_text('label_data_dir'))
+        if dirname:
+            variable.set(dirname)
+
+    def _verify_python_path(self, path, version):
+        """验证 Python 环境。"""
+        if not path or not os.path.exists(path):
+            messagebox.showerror(
+                self.sm.get_text('status_error'),
+                self.sm.get_text('msg_invalid_python')
+            )
+            return
+
+        def notify(kind, title, body):
+            def _show():
+                dialog = getattr(messagebox, kind)
+                dialog(title, body, parent=self.root)
+            self.root.after(0, _show)
+
+        def verify():
+            try:
+                result = subprocess.run(
+                    [path, "-c", "import sys; print(sys.version)"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    notify(
+                        'showinfo',
+                        self.sm.get_text('msg_verify_ok'),
+                        "Python {}:\n{}".format(version, result.stdout.strip())
+                    )
+                    if version == '3.x':
+                        self.root.after(0, self._refresh_opensource_support)
+                else:
+                    notify(
+                        'showerror',
+                        self.sm.get_text('msg_verify_fail'),
+                        result.stderr
+                    )
+            except Exception as e:
+                notify(
+                    'showerror',
+                    self.sm.get_text('msg_verify_fail'),
+                    str(e)
+                )
+
+        threading.Thread(target=verify).start()
+
+    def _probe_opensource_support(self, python3_path=None):
+        """检查开源库测试环境是否可用。"""
+        if python3_path is None:
+            python3_path = self.py3_var.get() if hasattr(self, 'py3_var') else self.sm.get('python_paths.python3', '')
+
+        if not python3_path:
+            return False, ['python3'], 'Python 3.x path not configured'
+        if not os.path.exists(python3_path):
+            return False, ['python3'], 'Python 3.x path does not exist'
+
+        probe_code = (
+            "import sys\n"
+            "sys.path.insert(0, %r)\n"
+            "missing = []\n"
+            "for module_name in %r:\n"
+            "    try:\n"
+            "        __import__(module_name)\n"
+            "    except Exception:\n"
+            "        missing.append(module_name)\n"
+            "print('OK' if not missing else 'MISSING:' + ','.join(missing))\n"
+        ) % (SCRIPT_DIR, OPEN_SOURCE_PACKAGES)
+
+        try:
+            result = subprocess.run(
+                [python3_path, '-u', '-c', probe_code],
+                capture_output=True,
+                text=True,
+                timeout=20
+            )
+            stdout = (result.stdout or '').strip()
+            stderr = (result.stderr or '').strip()
+            if result.returncode == 0 and stdout == 'OK':
+                return True, [], ''
+
+            missing = []
+            if stdout.startswith('MISSING:'):
+                missing = [item.strip() for item in stdout.split(':', 1)[1].split(',') if item.strip()]
+            if not missing:
+                missing = list(OPEN_SOURCE_PACKAGES)
+            return False, missing, stderr or stdout or 'Open-source benchmarks are unavailable'
+        except Exception as e:
+            return False, list(OPEN_SOURCE_PACKAGES), str(e)
+
+    def _format_opensource_status(self):
+        """生成开源库状态说明文本。"""
+        lang = self.sm.get('language', 'zh')
+        if self.os_available:
+            return '已安装，可启用' if lang == 'zh' else 'Installed and available'
+
+        if self.os_status_reason:
+            return '不可用：{}'.format(self.os_status_reason) if lang == 'zh' else 'Unavailable: {}'.format(self.os_status_reason)
+
+        missing = self.os_missing_modules or list(OPEN_SOURCE_PACKAGES)
+        return '未安装：{}'.format(', '.join(missing)) if lang == 'zh' else 'Missing: {}'.format(', '.join(missing))
+
+    def _refresh_opensource_support(self):
+        """刷新开源库可用性。"""
+        available, missing, reason = self._probe_opensource_support()
+        self.os_available = available
+        self.os_missing_modules = missing
+        self.os_status_reason = reason
+        if not available and hasattr(self, 'os_var'):
+            self.os_var.set(False)
+        self._apply_opensource_state()
+
+    def _apply_opensource_state(self):
+        """把开源库可用性同步到界面。"""
+        lang = self.sm.get('language', 'zh')
+        py3_path = self.py3_var.get() if hasattr(self, 'py3_var') else self.sm.get('python_paths.python3', '')
+        py3_ready = bool(py3_path and os.path.exists(py3_path))
+        checkbox_text = self.sm.get_text('chk_opensource')
+        if not self.os_available:
+            checkbox_text = checkbox_text + ('（未安装）' if lang == 'zh' else ' (Not installed)')
+        if hasattr(self, 'os_checkbox'):
+            self.os_checkbox.config(text=checkbox_text)
+            self.os_checkbox.config(state='normal' if self.os_available and not self.os_installing else 'disabled')
+        if hasattr(self, 'os_status_prefix_label'):
+            self.os_status_prefix_label.config(text=self.sm.get_text('label_os_status'))
+        if hasattr(self, 'os_status_label'):
+            self.os_status_label.config(text=self._format_opensource_status())
+        if hasattr(self, 'recheck_os_btn'):
+            self.recheck_os_btn.config(text=self.sm.get_text('btn_recheck'))
+            self.recheck_os_btn.config(state='normal' if py3_ready and not self.os_installing else 'disabled')
+        if hasattr(self, 'install_os_btn'):
+            self.install_os_btn.config(text=self.sm.get_text('btn_install_os'))
+            self.install_os_btn.config(state='normal' if py3_ready and not self.os_installing else 'disabled')
+        if hasattr(self, 'settings_btn'):
+            self.settings_btn.config(text=self.sm.get_text('btn_advanced_settings'))
+
+    def _install_opensource_packages(self):
+        """安装或修复开源库依赖。"""
+        if self.os_installing:
+            return
+
+        py3_path = self.py3_var.get() if hasattr(self, 'py3_var') else self.sm.get('python_paths.python3', '')
+        if not py3_path or not os.path.exists(py3_path):
+            self._log("Python 3.x 路径无效，无法安装开源包", "ERROR")
+            return
+
+        self.os_installing = True
+        self._apply_opensource_state()
+        self._log("开始安装/修复开源包: {}".format(', '.join(OPEN_SOURCE_PACKAGES)), "INFO")
+        worker = threading.Thread(
+            target=self._install_opensource_packages_worker,
+            args=(py3_path,),
+        )
+        worker.daemon = True
+        worker.start()
+
+    def _install_opensource_packages_worker(self, python3_path):
+        """后台安装开源库依赖。"""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        cmd = [
+            python3_path,
+            '-m', 'pip', 'install',
+            '--disable-pip-version-check',
+        ] + list(OPEN_SOURCE_PACKAGES)
+
+        env = os.environ.copy()
+        env['PYTHONUNBUFFERED'] = '1'
+        env['PYTHONIOENCODING'] = 'utf-8'
+
+        process = None
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
+                cwd=script_dir
+            )
+
+            for line in process.stdout:
+                text = line.strip()
+                if text:
+                    self.root.after(0, lambda m=text: self._log(m, "CMD"))
+
+            process.wait()
+
+            if process.returncode == 0:
+                self.root.after(0, lambda: self._log("开源包安装完成，正在重新检测环境...", "SUCCESS"))
+            else:
+                self.root.after(
+                    0,
+                    lambda rc=process.returncode: self._log("开源包安装失败，退出码: {}".format(rc), "ERROR")
+                )
+        except Exception as e:
+            self.root.after(0, lambda: self._log("安装开源包时出错: {}".format(str(e)), "ERROR"))
+        finally:
+            def _finish():
+                self.os_installing = False
+                self._refresh_opensource_support()
+
+            self.root.after(0, _finish)
 
     def _create_ui(self):
         """创建主UI"""
@@ -663,9 +931,8 @@ class ModernBenchmarkGUI(object):
         main_container = tk.Frame(self.root, bg=COLORS['bg_primary'])
         main_container.pack(fill='both', expand=True, padx=20, pady=15)
 
-        # 左侧控制面板
-        left_panel = tk.Frame(main_container, bg=COLORS['bg_primary'])
-        left_panel.pack(side='left', fill='y', padx=(0, 15))
+        # 左侧控制面板（可滚动）
+        left_panel = self._create_scrollable_sidebar(main_container)
 
         # 右侧内容区
         right_panel = tk.Frame(main_container, bg=COLORS['bg_primary'])
@@ -673,6 +940,7 @@ class ModernBenchmarkGUI(object):
 
         # 左侧卡片
         self._create_quick_settings_card(left_panel)
+        self._create_settings_card(left_panel)
         self._create_test_options_card(left_panel)
 
         # 右侧卡片
@@ -712,12 +980,6 @@ class ModernBenchmarkGUI(object):
         # 右侧工具按钮
         tools_frame = tk.Frame(header, bg=COLORS['bg_header'])
         tools_frame.pack(side='right', padx=20)
-
-        # 设置按钮
-        tk.Button(tools_frame, text=' Settings', bg=COLORS['accent_secondary'],
-                 fg=COLORS['text_light'], relief='flat', cursor='hand2',
-                 font=self._font(11), padx=15, pady=5,
-                 command=self._open_settings).pack(side='right', padx=5)
 
         # 语言切换按钮
         self.lang_btn = tk.Button(tools_frame, text='English', bg=COLORS['accent_secondary'],
@@ -761,6 +1023,96 @@ class ModernBenchmarkGUI(object):
                               highlightbackground=COLORS['border'], highlightthickness=1)
         self.scale_menu.pack(fill='x', pady=(5, 0))
 
+    def _create_settings_card(self, parent):
+        """常用运行设置卡片。"""
+        card = CardFrame(parent, title=' ' + self.sm.get_text('settings_title'))
+        card.pack(fill='x', pady=(0, 15), ipadx=10, ipady=10)
+        self.settings_card = card
+
+        content = tk.Frame(card, bg=COLORS['bg_secondary'])
+        content.pack(fill='x', padx=15, pady=10)
+
+        self.py27_var = tk.StringVar(value=self.sm.get('python_paths.python27', ''))
+        py27_row = tk.Frame(content, bg=COLORS['bg_secondary'])
+        py27_row.pack(fill='x', pady=3)
+        tk.Label(py27_row, text=self.sm.get_text('label_python27'),
+                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
+                font=self._font(10)).pack(side='left')
+        tk.Entry(py27_row, textvariable=self.py27_var, font=self._font(10)).pack(side='left', padx=5, fill='x', expand=True)
+        tk.Button(py27_row, text=self.sm.get_text('btn_browse'),
+                 command=lambda: self._browse_python_path(self.py27_var),
+                 bg=COLORS['accent_secondary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+        tk.Button(py27_row, text=self.sm.get_text('btn_verify'),
+                 command=lambda: self._verify_python_path(self.py27_var.get(), '2.7'),
+                 bg=COLORS['accent_primary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+
+        self.py3_var = tk.StringVar(value=self.sm.get('python_paths.python3', ''))
+        py3_row = tk.Frame(content, bg=COLORS['bg_secondary'])
+        py3_row.pack(fill='x', pady=3)
+        tk.Label(py3_row, text=self.sm.get_text('label_python3'),
+                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
+                font=self._font(10)).pack(side='left')
+        tk.Entry(py3_row, textvariable=self.py3_var, font=self._font(10)).pack(side='left', padx=5, fill='x', expand=True)
+        tk.Button(py3_row, text=self.sm.get_text('btn_browse'),
+                 command=lambda: self._browse_python_path(self.py3_var, self.sm.get_text('label_python3')),
+                 bg=COLORS['accent_secondary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+        tk.Button(py3_row, text=self.sm.get_text('btn_verify'),
+                 command=lambda: self._verify_python_path(self.py3_var.get(), '3.x'),
+                 bg=COLORS['accent_primary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+
+        self.runs_var = tk.IntVar(value=self.sm.get('test_settings.runs', 3))
+        runs_row = tk.Frame(content, bg=COLORS['bg_secondary'])
+        runs_row.pack(fill='x', pady=3)
+        tk.Label(runs_row, text=self.sm.get_text('label_runs'),
+                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
+                font=self._font(10)).pack(side='left')
+        tk.Spinbox(runs_row, from_=1, to=20, textvariable=self.runs_var, width=8,
+                  font=self._font(10)).pack(side='left', padx=5)
+
+        self.warmup_var = tk.IntVar(value=self.sm.get('test_settings.warmup', 1))
+        warmup_row = tk.Frame(content, bg=COLORS['bg_secondary'])
+        warmup_row.pack(fill='x', pady=3)
+        tk.Label(warmup_row, text=self.sm.get_text('label_warmup'),
+                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
+                font=self._font(10)).pack(side='left')
+        tk.Spinbox(warmup_row, from_=0, to=10, textvariable=self.warmup_var, width=8,
+                  font=self._font(10)).pack(side='left', padx=5)
+
+        self.workers_var = tk.IntVar(value=self.sm.get('test_settings.mp_workers', 4))
+        workers_row = tk.Frame(content, bg=COLORS['bg_secondary'])
+        workers_row.pack(fill='x', pady=3)
+        tk.Label(workers_row, text=self.sm.get_text('label_workers'),
+                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
+                font=self._font(10)).pack(side='left')
+        tk.Spinbox(workers_row, from_=1, to=16, textvariable=self.workers_var, width=8,
+                  font=self._font(10)).pack(side='left', padx=5)
+
+        self.data_dir_var = tk.StringVar(value=self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data'))
+        data_row = tk.Frame(content, bg=COLORS['bg_secondary'])
+        data_row.pack(fill='x', pady=3)
+        tk.Label(data_row, text=self.sm.get_text('label_data_dir'),
+                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
+                font=self._font(10)).pack(side='left')
+        tk.Entry(data_row, textvariable=self.data_dir_var, font=self._font(10)).pack(side='left', padx=5, fill='x', expand=True)
+        tk.Button(data_row, text=self.sm.get_text('btn_browse'),
+                 command=lambda: self._browse_directory(self.data_dir_var),
+                 bg=COLORS['accent_secondary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+
+        self.timestamp_var = tk.BooleanVar(value=self.sm.get('result_settings.use_timestamp_folder', True))
+        tk.Checkbutton(content, text=self.sm.get_text('chk_timestamp_folder'),
+                      variable=self.timestamp_var, bg=COLORS['bg_secondary'],
+                      fg=COLORS['text_primary'], font=self._font(10),
+                      selectcolor=COLORS['bg_secondary'], activebackground=COLORS['bg_secondary']).pack(anchor='w', pady=(6, 0))
+
+        self.settings_btn = tk.Button(
+            content,
+            text=self.sm.get_text('btn_advanced_settings'),
+            bg=COLORS['accent_secondary'], fg=COLORS['text_light'],
+            relief='flat', cursor='hand2', font=self._font(10), padx=12, pady=4,
+            command=self._open_settings
+        )
+        self.settings_btn.pack(anchor='e', pady=(10, 0))
+
     def _create_test_options_card(self, parent):
         """测试选项卡片"""
         card = CardFrame(parent, title=' Test Options')
@@ -781,7 +1133,31 @@ class ModernBenchmarkGUI(object):
         os_frame = tk.Frame(content, bg='white', padx=15, pady=12,
                            highlightbackground='black', highlightthickness=2)
         os_frame.pack(fill='x', pady=8)
-        self._create_big_checkbox(os_frame, self.sm.get_text('chk_opensource'), self.os_var)
+        self.os_checkbox = self._create_big_checkbox(os_frame, self.sm.get_text('chk_opensource'), self.os_var)
+        status_row = tk.Frame(os_frame, bg='white')
+        status_row.pack(fill='x', pady=(6, 0))
+        self.os_status_prefix_label = tk.Label(status_row, text=self.sm.get_text('label_os_status'),
+                                              bg='white', fg=COLORS['text_secondary'], font=self._font(9))
+        self.os_status_prefix_label.pack(side='left')
+        self.os_status_label = tk.Label(status_row, text='',
+                                       bg='white', fg=COLORS['text_primary'],
+                                       font=self._font(9))
+        self.os_status_label.pack(side='left', padx=(5, 0), fill='x', expand=True)
+        self.recheck_os_btn = tk.Button(
+            status_row,
+            text=self.sm.get_text('btn_recheck'),
+            bg=COLORS['accent_secondary'], fg='white', relief='flat',
+            cursor='hand2', font=self._font(9), command=self._refresh_opensource_support
+        )
+        self.recheck_os_btn.pack(side='right', padx=(5, 0))
+
+        self.install_os_btn = tk.Button(
+            os_frame,
+            text=self.sm.get_text('btn_install_os'),
+            bg=COLORS['accent_success'], fg='white', relief='flat',
+            cursor='hand2', font=self._font(9), command=self._install_opensource_packages
+        )
+        self.install_os_btn.pack(fill='x', pady=(8, 0))
 
         # 打开文件夹按钮
         self.open_temp_btn = tk.Button(
@@ -845,12 +1221,6 @@ class ModernBenchmarkGUI(object):
                                 relief='flat', cursor='hand2', font=self._font(14, bold=True),
                                 padx=30, pady=12, command=self._start_test)
         self.run_btn.pack(side='left', padx=(0, 10))
-
-        self.run_all_btn = tk.Button(btn_frame, text=' Run All Scales',
-                                    bg=COLORS['accent_warning'], fg=COLORS['text_light'],
-                                    relief='flat', cursor='hand2', font=self._font(14, bold=True),
-                                    padx=30, pady=12, command=self._start_all_scales)
-        self.run_all_btn.pack(side='left', padx=(0, 10))
 
         self.stop_btn = tk.Button(btn_frame, text=' Stop',
                                  bg=COLORS['accent_danger'], fg=COLORS['text_light'],
@@ -930,15 +1300,7 @@ class ModernBenchmarkGUI(object):
 
     def _open_temp_folder(self):
         """Open the temp folder currently being used by the running or last test"""
-        # If a test is running or has run, use the current test's directory
-        if hasattr(self, 'current_timestamp') and self.current_timestamp:
-            temp_dir = os.path.join(
-                self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data'),
-                self.current_timestamp
-            )
-        else:
-            # No test has run yet, use base data directory
-            temp_dir = self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data')
+        temp_dir = getattr(self, 'current_output_dir', '') or self.data_dir_var.get().strip() or r'C:\temp\arcgis_benchmark_data'
 
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
@@ -970,12 +1332,12 @@ class ModernBenchmarkGUI(object):
 
     def _estimate_total_progress_units(self):
         """估算当前测试流程的总进度单位数"""
-        py27_path = self.sm.get('python_paths.python27', '')
-        py3_path = self.sm.get('python_paths.python3', '')
+        py27_path = self.py27_var.get() if hasattr(self, 'py27_var') else self.sm.get('python_paths.python27', '')
+        py3_path = self.py3_var.get() if hasattr(self, 'py3_var') else self.sm.get('python_paths.python3', '')
         has_py27 = bool(py27_path and os.path.exists(py27_path))
         has_py3 = bool(py3_path and os.path.exists(py3_path))
         include_mp = bool(self.mp_var.get())
-        include_os = bool(self.os_var.get())
+        include_os = bool(self.os_var.get() and self.os_available)
 
         total = 0
 
@@ -1084,20 +1446,12 @@ class ModernBenchmarkGUI(object):
         self._log("  Scale: {} ({})".format(scale, scale_display))
         self._log("  Data Scale Config: {}".format(self.sm.get_scale_config(scale)))
         self._log("  Multiprocess: {}".format(self.mp_var.get()))
-        self._log("  Open Source: {}".format(self.os_var.get()))
-        self._log("  Python 2.7: {}".format(self.sm.get('python_paths.python27', 'Not set')))
-        self._log("  Python 3.x: {}".format(self.sm.get('python_paths.python3', 'Not set')))
+        self._log("  Open Source: {}".format(self.os_var.get() and self.os_available))
+        self._log("  Python 2.7: {}".format(self.py27_var.get() if hasattr(self, 'py27_var') else self.sm.get('python_paths.python27', 'Not set')))
+        self._log("  Python 3.x: {}".format(self.py3_var.get() if hasattr(self, 'py3_var') else self.sm.get('python_paths.python3', 'Not set')))
         self._log("=" * 60)
 
         self.test_queue = [scale]
-        self._run_tests()
-
-    def _start_all_scales(self):
-        """开始所有规模的测试"""
-        if self.is_running:
-            return
-
-        self.test_queue = ['tiny', 'small', 'standard', 'medium', 'large']
         self._run_tests()
 
     def _run_tests(self):
@@ -1110,13 +1464,18 @@ class ModernBenchmarkGUI(object):
         self.should_stop = False
         self.start_time = datetime.now()
         self.completed_tests = 0
+        self._refresh_opensource_support()
 
-        # Generate timestamped output directory
-        self.current_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.current_output_dir = os.path.join(
-            self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data'),
-            self.current_timestamp
-        )
+        # Generate output directory
+        base_dir = self.data_dir_var.get().strip() if hasattr(self, 'data_dir_var') else ''
+        if not base_dir:
+            base_dir = r'C:\temp\arcgis_benchmark_data'
+        if hasattr(self, 'timestamp_var') and self.timestamp_var.get():
+            self.current_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self.current_output_dir = os.path.join(base_dir, self.current_timestamp)
+        else:
+            self.current_timestamp = ''
+            self.current_output_dir = base_dir
         self.root.after(0, lambda: self._log("Output directory: {}".format(self.current_output_dir)))
         total_units = self._estimate_total_progress_units()
         self.completed_tests = 0
@@ -1125,7 +1484,6 @@ class ModernBenchmarkGUI(object):
 
         # Update UI state
         self.run_btn.config(state='disabled')
-        self.run_all_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
 
         # Start test thread
@@ -1152,8 +1510,8 @@ class ModernBenchmarkGUI(object):
 
     def _run_single_scale(self, scale):
         """运行单个规模的测试"""
-        py27_path = self.sm.get('python_paths.python27', '')
-        py3_path = self.sm.get('python_paths.python3', '')
+        py27_path = self.py27_var.get() if hasattr(self, 'py27_var') else self.sm.get('python_paths.python27', '')
+        py3_path = self.py3_var.get() if hasattr(self, 'py3_var') else self.sm.get('python_paths.python3', '')
 
         if not py27_path or not os.path.exists(py27_path):
             self.root.after(0, lambda: self._log("Python 2.7 not found, skipping", "WARNING"))
@@ -1166,7 +1524,7 @@ class ModernBenchmarkGUI(object):
             self._run_python_benchmark(py3_path, scale, 'py3', self.current_output_dir)
 
             # Open source tests (Python 3 only)
-            if self.os_var.get():
+            if self.os_var.get() and self.os_available:
                 self._run_python_benchmark(py3_path, scale, 'os', self.current_output_dir)
 
     def _run_python_benchmark(self, python_path, scale, test_type, output_dir=None):
@@ -1183,8 +1541,8 @@ class ModernBenchmarkGUI(object):
             '-u',
             run_benchmarks_path,
             '--scale', scale,
-            '--runs', str(self.sm.get('test_settings.runs', 3)),
-            '--warmup', str(self.sm.get('test_settings.warmup', 1)),
+            '--runs', str(self.runs_var.get() if hasattr(self, 'runs_var') else self.sm.get('test_settings.runs', 3)),
+            '--warmup', str(self.warmup_var.get() if hasattr(self, 'warmup_var') else self.sm.get('test_settings.warmup', 1)),
             '--generate-data'
         ]
 
@@ -1196,7 +1554,7 @@ class ModernBenchmarkGUI(object):
 
         if self.mp_var.get():
             cmd.append('--multiprocess')
-            cmd.extend(['--mp-workers', str(self.sm.get('test_settings.mp_workers', 4))])
+            cmd.extend(['--mp-workers', str(self.workers_var.get() if hasattr(self, 'workers_var') else self.sm.get('test_settings.mp_workers', 4))])
 
         test_name = "{} ({})".format(test_type.upper(), scale)
         self.root.after(0, lambda: self.current_test_label.config(text=test_name))
@@ -1270,7 +1628,6 @@ class ModernBenchmarkGUI(object):
 
         # Reset UI
         self.run_btn.config(state='normal')
-        self.run_all_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         self.completed_tests = 0
         self.total_tests = 0
@@ -1290,7 +1647,7 @@ class ModernBenchmarkGUI(object):
         """生成对比报告"""
         self._log("Generating comparison report...", "INFO")
         try:
-            py3_path = self.sm.get('python_paths.python3', 'python')
+            py3_path = self.py3_var.get() if hasattr(self, 'py3_var') else self.sm.get('python_paths.python3', 'python')
 
             results_dir = getattr(self, 'current_output_dir', None)
             if not results_dir:
@@ -1395,19 +1752,41 @@ class ModernBenchmarkGUI(object):
     def _on_settings_changed(self):
         """设置变更后的回调"""
         self._update_language()
+        if hasattr(self, 'py27_var'):
+            self.py27_var.set(self.sm.get('python_paths.python27', ''))
+        if hasattr(self, 'py3_var'):
+            self.py3_var.set(self.sm.get('python_paths.python3', ''))
+        if hasattr(self, 'runs_var'):
+            self.runs_var.set(self.sm.get('test_settings.runs', 3))
+        if hasattr(self, 'warmup_var'):
+            self.warmup_var.set(self.sm.get('test_settings.warmup', 1))
+        if hasattr(self, 'workers_var'):
+            self.workers_var.set(self.sm.get('test_settings.mp_workers', 4))
+        if hasattr(self, 'data_dir_var'):
+            self.data_dir_var.set(self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data'))
+        if hasattr(self, 'timestamp_var'):
+            self.timestamp_var.set(self.sm.get('result_settings.use_timestamp_folder', True))
+        if hasattr(self, 'scale_var') and hasattr(self, 'scale_names'):
+            scale_key = self.sm.get('test_settings.data_scale', 'tiny')
+            self.scale_var.set(self.scale_names.get(scale_key, scale_key))
         self.mp_var.set(self.sm.get('test_settings.enable_multiprocess', False))
         self.os_var.set(self.sm.get('test_settings.enable_opensource', False))
+        self._refresh_opensource_support()
 
     def _update_language(self):
         self.title_label.config(text=self.sm.get_text('app_title'))
         self.lang_btn.config(text=self.sm.get_text('btn_language'))
         if hasattr(self, 'open_temp_btn'):
             self.open_temp_btn.config(text=self.sm.get_text('btn_open_temp'))
+        if hasattr(self, 'settings_card') and hasattr(self.settings_card, 'title_label'):
+            self.settings_card.title_label.config(text=' ' + self.sm.get_text('settings_title'))
 
         # Update button texts
         self.run_btn.config(text=self.sm.get_text('btn_run'))
-        self.run_all_btn.config(text=self.sm.get_text('btn_run_all'))
         self.stop_btn.config(text=self.sm.get_text('btn_stop'))
+        if hasattr(self, 'settings_btn'):
+            self.settings_btn.config(text=self.sm.get_text('btn_advanced_settings'))
+        self._apply_opensource_state()
 
     def _on_closing(self):
         """窗口关闭处理"""
@@ -1422,8 +1801,22 @@ class ModernBenchmarkGUI(object):
             scale_display = self.scale_var.get()
             scale_key = self.scale_name_to_key.get(scale_display, 'tiny')
             self.sm.set('test_settings.data_scale', scale_key)
+            if hasattr(self, 'py27_var'):
+                self.sm.set('python_paths.python27', self.py27_var.get())
+            if hasattr(self, 'py3_var'):
+                self.sm.set('python_paths.python3', self.py3_var.get())
+            if hasattr(self, 'runs_var'):
+                self.sm.set('test_settings.runs', self.runs_var.get())
+            if hasattr(self, 'warmup_var'):
+                self.sm.set('test_settings.warmup', self.warmup_var.get())
+            if hasattr(self, 'workers_var'):
+                self.sm.set('test_settings.mp_workers', self.workers_var.get())
+            if hasattr(self, 'data_dir_var'):
+                self.sm.set('paths.data_dir', self.data_dir_var.get())
+            if hasattr(self, 'timestamp_var'):
+                self.sm.set('result_settings.use_timestamp_folder', self.timestamp_var.get())
             self.sm.set('test_settings.enable_multiprocess', self.mp_var.get())
-            self.sm.set('test_settings.enable_opensource', self.os_var.get())
+            self.sm.set('test_settings.enable_opensource', self.os_var.get() and self.os_available)
             self.sm.save_config()
 
         self.root.destroy()
