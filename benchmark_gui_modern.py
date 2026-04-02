@@ -51,7 +51,7 @@ COLORS = {
 DEFAULT_ARCPY_REGULAR_BENCHMARKS = 12
 DEFAULT_ARCPY_MULTIPROCESS_BENCHMARKS = 5
 DEFAULT_OS_REGULAR_BENCHMARKS = 12
-DEFAULT_OS_MULTIPROCESS_BENCHMARKS = 3
+DEFAULT_OS_MULTIPROCESS_BENCHMARKS = 5
 OPEN_SOURCE_PACKAGES = ('geopandas', 'rasterio', 'shapely', 'pyogrio', 'numpy')
 
 
@@ -670,9 +670,20 @@ class ModernBenchmarkGUI(object):
 
         def _update_scrollregion(event=None):
             canvas.configure(scrollregion=canvas.bbox('all'))
+            _sync_scrollbar()
 
         def _update_content_width(event):
             canvas.itemconfig(window_id, width=event.width)
+            _sync_scrollbar()
+
+        def _sync_scrollbar():
+            canvas.update_idletasks()
+            needs_scroll = content.winfo_reqheight() > canvas.winfo_height()
+            is_mapped = scrollbar.winfo_ismapped()
+            if needs_scroll and not is_mapped:
+                scrollbar.pack(side='right', fill='y')
+            elif not needs_scroll and is_mapped:
+                scrollbar.pack_forget()
 
         content.bind('<Configure>', _update_scrollregion)
         canvas.bind('<Configure>', _update_content_width)
@@ -683,6 +694,7 @@ class ModernBenchmarkGUI(object):
         self.sidebar_canvas = canvas
         self.sidebar_content = content
         self.sidebar_scrollbar = scrollbar
+        self.root.after(0, _sync_scrollbar)
         return content
 
     def _create_big_checkbox(self, parent, text, variable):
@@ -693,9 +705,9 @@ class ModernBenchmarkGUI(object):
         # 使用更大的指示器大小和浅色选中背景
         cb = tk.Checkbutton(frame, text=text, variable=variable,
                            bg='white', fg=COLORS['text_primary'],
-                           font=self._font(12), selectcolor='#e3f2fd',  # 浅蓝色背景
+                           font=self._font(11), selectcolor='#e3f2fd',  # 浅蓝色背景
                            activebackground='white', cursor='hand2',
-                           height=1, anchor='w', padx=5, pady=3)
+                           height=0, anchor='w', padx=4, pady=1)
         cb.pack(anchor='w', fill='x')
         return cb
 
@@ -1030,88 +1042,84 @@ class ModernBenchmarkGUI(object):
         self.settings_card = card
 
         content = tk.Frame(card, bg=COLORS['bg_secondary'])
-        content.pack(fill='x', padx=15, pady=10)
+        content.pack(fill='x', padx=15, pady=8)
 
         self.py27_var = tk.StringVar(value=self.sm.get('python_paths.python27', ''))
         py27_row = tk.Frame(content, bg=COLORS['bg_secondary'])
-        py27_row.pack(fill='x', pady=3)
+        py27_row.pack(fill='x', pady=2)
         tk.Label(py27_row, text=self.sm.get_text('label_python27'),
                 bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
-                font=self._font(10)).pack(side='left')
-        tk.Entry(py27_row, textvariable=self.py27_var, font=self._font(10)).pack(side='left', padx=5, fill='x', expand=True)
+                font=self._font(9)).pack(side='left')
+        tk.Entry(py27_row, textvariable=self.py27_var, font=self._font(9)).pack(side='left', padx=4, fill='x', expand=True)
         tk.Button(py27_row, text=self.sm.get_text('btn_browse'),
                  command=lambda: self._browse_python_path(self.py27_var),
-                 bg=COLORS['accent_secondary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+                 bg=COLORS['accent_secondary'], fg='white', font=self._font(8)).pack(side='left', padx=2)
         tk.Button(py27_row, text=self.sm.get_text('btn_verify'),
                  command=lambda: self._verify_python_path(self.py27_var.get(), '2.7'),
-                 bg=COLORS['accent_primary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+                 bg=COLORS['accent_primary'], fg='white', font=self._font(8)).pack(side='left', padx=2)
 
         self.py3_var = tk.StringVar(value=self.sm.get('python_paths.python3', ''))
         py3_row = tk.Frame(content, bg=COLORS['bg_secondary'])
-        py3_row.pack(fill='x', pady=3)
+        py3_row.pack(fill='x', pady=2)
         tk.Label(py3_row, text=self.sm.get_text('label_python3'),
                 bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
-                font=self._font(10)).pack(side='left')
-        tk.Entry(py3_row, textvariable=self.py3_var, font=self._font(10)).pack(side='left', padx=5, fill='x', expand=True)
+                font=self._font(9)).pack(side='left')
+        tk.Entry(py3_row, textvariable=self.py3_var, font=self._font(9)).pack(side='left', padx=4, fill='x', expand=True)
         tk.Button(py3_row, text=self.sm.get_text('btn_browse'),
                  command=lambda: self._browse_python_path(self.py3_var, self.sm.get_text('label_python3')),
-                 bg=COLORS['accent_secondary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+                 bg=COLORS['accent_secondary'], fg='white', font=self._font(8)).pack(side='left', padx=2)
         tk.Button(py3_row, text=self.sm.get_text('btn_verify'),
                  command=lambda: self._verify_python_path(self.py3_var.get(), '3.x'),
-                 bg=COLORS['accent_primary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+                 bg=COLORS['accent_primary'], fg='white', font=self._font(8)).pack(side='left', padx=2)
 
         self.runs_var = tk.IntVar(value=self.sm.get('test_settings.runs', 3))
-        runs_row = tk.Frame(content, bg=COLORS['bg_secondary'])
-        runs_row.pack(fill='x', pady=3)
-        tk.Label(runs_row, text=self.sm.get_text('label_runs'),
-                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
-                font=self._font(10)).pack(side='left')
-        tk.Spinbox(runs_row, from_=1, to=20, textvariable=self.runs_var, width=8,
-                  font=self._font(10)).pack(side='left', padx=5)
-
         self.warmup_var = tk.IntVar(value=self.sm.get('test_settings.warmup', 1))
-        warmup_row = tk.Frame(content, bg=COLORS['bg_secondary'])
-        warmup_row.pack(fill='x', pady=3)
-        tk.Label(warmup_row, text=self.sm.get_text('label_warmup'),
-                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
-                font=self._font(10)).pack(side='left')
-        tk.Spinbox(warmup_row, from_=0, to=10, textvariable=self.warmup_var, width=8,
-                  font=self._font(10)).pack(side='left', padx=5)
-
         self.workers_var = tk.IntVar(value=self.sm.get('test_settings.mp_workers', 4))
-        workers_row = tk.Frame(content, bg=COLORS['bg_secondary'])
-        workers_row.pack(fill='x', pady=3)
-        tk.Label(workers_row, text=self.sm.get_text('label_workers'),
-                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
-                font=self._font(10)).pack(side='left')
-        tk.Spinbox(workers_row, from_=1, to=16, textvariable=self.workers_var, width=8,
-                  font=self._font(10)).pack(side='left', padx=5)
+        params_row = tk.Frame(content, bg=COLORS['bg_secondary'])
+        params_row.pack(fill='x', pady=(4, 2))
+
+        param_specs = [
+            (self.sm.get_text('label_runs'), self.runs_var, 1, 20),
+            (self.sm.get_text('label_warmup'), self.warmup_var, 0, 10),
+            (self.sm.get_text('label_workers'), self.workers_var, 1, 16),
+        ]
+        for index, (label_text, var, min_value, max_value) in enumerate(param_specs):
+            field = tk.Frame(params_row, bg=COLORS['bg_secondary'])
+            field.pack(side='left', fill='x', expand=True, padx=(0 if index == 0 else 6, 0))
+            tk.Label(field, text=label_text,
+                    bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
+                    font=self._font(9)).pack(anchor='w')
+            tk.Spinbox(field, from_=min_value, to=max_value, textvariable=var, width=6,
+                      font=self._font(9)).pack(fill='x', pady=(2, 0))
 
         self.data_dir_var = tk.StringVar(value=self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data'))
         data_row = tk.Frame(content, bg=COLORS['bg_secondary'])
-        data_row.pack(fill='x', pady=3)
+        data_row.pack(fill='x', pady=(4, 2))
         tk.Label(data_row, text=self.sm.get_text('label_data_dir'),
                 bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
-                font=self._font(10)).pack(side='left')
-        tk.Entry(data_row, textvariable=self.data_dir_var, font=self._font(10)).pack(side='left', padx=5, fill='x', expand=True)
+                font=self._font(9)).pack(side='left')
+        tk.Entry(data_row, textvariable=self.data_dir_var, font=self._font(9)).pack(side='left', padx=4, fill='x', expand=True)
         tk.Button(data_row, text=self.sm.get_text('btn_browse'),
                  command=lambda: self._browse_directory(self.data_dir_var),
-                 bg=COLORS['accent_secondary'], fg='white', font=self._font(9)).pack(side='left', padx=2)
+                 bg=COLORS['accent_secondary'], fg='white', font=self._font(8)).pack(side='left', padx=2)
+
+        footer_row = tk.Frame(content, bg=COLORS['bg_secondary'])
+        footer_row.pack(fill='x', pady=(6, 0))
 
         self.timestamp_var = tk.BooleanVar(value=self.sm.get('result_settings.use_timestamp_folder', True))
-        tk.Checkbutton(content, text=self.sm.get_text('chk_timestamp_folder'),
+        tk.Checkbutton(footer_row, text=self.sm.get_text('chk_timestamp_folder'),
                       variable=self.timestamp_var, bg=COLORS['bg_secondary'],
-                      fg=COLORS['text_primary'], font=self._font(10),
-                      selectcolor=COLORS['bg_secondary'], activebackground=COLORS['bg_secondary']).pack(anchor='w', pady=(6, 0))
+                      fg=COLORS['text_primary'], font=self._font(9),
+                      selectcolor=COLORS['bg_secondary'], activebackground=COLORS['bg_secondary']).pack(side='left')
 
         self.settings_btn = tk.Button(
-            content,
+            footer_row,
             text=self.sm.get_text('btn_advanced_settings'),
             bg=COLORS['accent_secondary'], fg=COLORS['text_light'],
-            relief='flat', cursor='hand2', font=self._font(10), padx=12, pady=4,
+            relief='flat', cursor='hand2', font=self._font(9), padx=10, pady=3,
             command=self._open_settings
         )
-        self.settings_btn.pack(anchor='e', pady=(10, 0))
+        self.settings_btn.pack(side='right')
 
     def _create_test_options_card(self, parent):
         """测试选项卡片"""
@@ -1123,31 +1131,31 @@ class ModernBenchmarkGUI(object):
 
         # 多进程选项 - 使用大号自定义复选框
         self.mp_var = tk.BooleanVar(value=self.sm.get('test_settings.enable_multiprocess', False))
-        mp_frame = tk.Frame(content, bg='white', padx=15, pady=12,
-                           highlightbackground='black', highlightthickness=2)
-        mp_frame.pack(fill='x', pady=8)
+        mp_frame = tk.Frame(content, bg='white', padx=10, pady=8,
+                           highlightbackground='black', highlightthickness=1)
+        mp_frame.pack(fill='x', pady=(4, 6))
         self._create_big_checkbox(mp_frame, self.sm.get_text('chk_multiprocess'), self.mp_var)
 
         # 开源库选项 - 使用大号自定义复选框
         self.os_var = tk.BooleanVar(value=self.sm.get('test_settings.enable_opensource', False))
-        os_frame = tk.Frame(content, bg='white', padx=15, pady=12,
-                           highlightbackground='black', highlightthickness=2)
-        os_frame.pack(fill='x', pady=8)
+        os_frame = tk.Frame(content, bg='white', padx=10, pady=8,
+                           highlightbackground='black', highlightthickness=1)
+        os_frame.pack(fill='x', pady=(0, 6))
         self.os_checkbox = self._create_big_checkbox(os_frame, self.sm.get_text('chk_opensource'), self.os_var)
         status_row = tk.Frame(os_frame, bg='white')
-        status_row.pack(fill='x', pady=(6, 0))
+        status_row.pack(fill='x', pady=(4, 0))
         self.os_status_prefix_label = tk.Label(status_row, text=self.sm.get_text('label_os_status'),
-                                              bg='white', fg=COLORS['text_secondary'], font=self._font(9))
+                                              bg='white', fg=COLORS['text_secondary'], font=self._font(8))
         self.os_status_prefix_label.pack(side='left')
         self.os_status_label = tk.Label(status_row, text='',
                                        bg='white', fg=COLORS['text_primary'],
-                                       font=self._font(9))
+                                       font=self._font(8))
         self.os_status_label.pack(side='left', padx=(5, 0), fill='x', expand=True)
         self.recheck_os_btn = tk.Button(
             status_row,
             text=self.sm.get_text('btn_recheck'),
             bg=COLORS['accent_secondary'], fg='white', relief='flat',
-            cursor='hand2', font=self._font(9), command=self._refresh_opensource_support
+            cursor='hand2', font=self._font(8), command=self._refresh_opensource_support
         )
         self.recheck_os_btn.pack(side='right', padx=(5, 0))
 
@@ -1155,19 +1163,19 @@ class ModernBenchmarkGUI(object):
             os_frame,
             text=self.sm.get_text('btn_install_os'),
             bg=COLORS['accent_success'], fg='white', relief='flat',
-            cursor='hand2', font=self._font(9), command=self._install_opensource_packages
+            cursor='hand2', font=self._font(8), command=self._install_opensource_packages
         )
-        self.install_os_btn.pack(fill='x', pady=(8, 0))
+        self.install_os_btn.pack(fill='x', pady=(6, 0))
 
         # 打开文件夹按钮
         self.open_temp_btn = tk.Button(
             content,
             text=self.sm.get_text('btn_open_temp'),
             bg=COLORS['bg_primary'], fg=COLORS['accent_primary'],
-            relief='flat', font=self._font(11), cursor='hand2',
+            relief='flat', font=self._font(10), cursor='hand2',
             command=self._open_temp_folder
         )
-        self.open_temp_btn.pack(fill='x', pady=(15, 0), ipady=8)
+        self.open_temp_btn.pack(fill='x', pady=(10, 0), ipady=6)
 
     def _create_progress_card(self, parent):
         """进度卡片"""

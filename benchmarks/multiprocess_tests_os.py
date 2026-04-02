@@ -19,6 +19,9 @@ try:
     import geopandas as gpd
     from shapely.geometry import box
     import numpy as np
+    import pandas as pd
+    import rasterio
+    from rasterio.transform import from_bounds
     HAS_OS_LIBS = True
 except ImportError:
     HAS_OS_LIBS = False
@@ -58,6 +61,51 @@ def generate_points_chunk(args):
     y_coords = np.random.uniform(-90, 90, count)
     from shapely.geometry import Point
     return [Point(x, y) for x, y in zip(x_coords, y_coords)]
+
+
+def intersect_features_chunk(args):
+    """Worker function for intersecting a chunk against the full reference layer."""
+    features_chunk, gdf_b = args
+    if features_chunk is None or len(features_chunk) == 0:
+        return gpd.GeoDataFrame({'geometry': []}, geometry='geometry', crs=gdf_b.crs)
+
+    if features_chunk.crs is not None and gdf_b.crs != features_chunk.crs:
+        gdf_b = gdf_b.to_crs(features_chunk.crs)
+
+    return gpd.overlay(features_chunk, gdf_b, how='intersection')
+
+
+def create_constant_raster_chunk(args):
+    """Worker function for creating a raster chunk."""
+    start_row, end_row, width, value = args
+    row_count = max(0, end_row - start_row)
+    if row_count <= 0:
+        return np.empty((0, width), dtype=np.uint8)
+    return np.full((row_count, width), value, dtype=np.uint8)
+
+
+def split_even_ranges(total_items, num_workers):
+    """Split a total item count into evenly balanced ranges."""
+    total_items = int(total_items)
+    num_workers = max(1, int(num_workers))
+
+    if total_items <= 0:
+        return []
+
+    worker_count = min(num_workers, total_items)
+    base = total_items // worker_count
+    remainder = total_items % worker_count
+
+    ranges = []
+    start = 0
+    for worker_id in range(worker_count):
+        extra = 1 if worker_id < remainder else 0
+        end = start + base + extra
+        if end > start:
+            ranges.append((start, end))
+        start = end
+
+    return ranges
 
 
 class MultiprocessBenchmarkOS(BaseBenchmark):
@@ -345,6 +393,142 @@ class MP_V3_Buffer_OS(MultiprocessBenchmarkOS):
         return {'features_created': len(result_gdf), 'mode': 'multiprocess', 'workers': num_workers}
 
 
+class MP_V4_Intersect_OS(MultiprocessBenchmarkOS):
+    """Multiprocess benchmark: Intersect Analysis using GeoPandas"""
+
+    def __init__(self):
+        super(MP_V4_Intersect_OS, self).__init__("MP_V4_Intersect_OS", "vector_multiprocess")
+        self.gdb_path = None
+        self.input_a_layer = None
+        self.input_b_layer = None
+        self.output_path = None
+
+    def setup(self):
+        self.gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
+        self.input_a_layer = "test_polygons_a"
+        self.input_b_layer = "test_polygons_b"
+        self.output_path = os.path.join(settings.DATA_DIR, "MP_V4_intersect_output_os.gpkg")
+
+    def teardown(self):
+        if self.output_path and os.path.exists(self.output_path):
+            try:
+                os.remove(self.output_path)
+            except:
+                pass
+
+    def run_single(self):
+        gdf_a = gpd.read_file(self.gdb_path, layer=self.input_a_layer)
+        gdf_b = gpd.read_file(self.gdb_path, layer=self.input_b_layer)
+
+        if gdf_a.crs is not None and gdf_b.crs != gdf_a.crs:
+            gdf_b = gdf_b.to_crs(gdf_a.crs)
+
+        result = gpd.overlay(gdf_a, gdf_b, how='intersection')
+        result.to_file(self.output_path, driver="GPKG")
+
+        return {'features_created': len(result), 'mode': 'single'}
+
+    def run_multiprocess(self, num_workers):
+        gdf_a = gpd.read_file(self.gdb_path, layer=self.input_a_layer)
+        gdf_b = gpd.read_file(self.gdb_path, layer=self.input_b_layer)
+
+        if gdf_a.crs is not None and gdf_b.crs != gdf_a.crs:
+            gdf_b = gdf_b.to_crs(gdf_a.crs)
+
+        chunks = []
+        for start, end in split_even_ranges(len(gdf_a), num_workers):
+            chunks.append(gdf_a.iloc[start:end].copy())
+
+        if not chunks:
+            raise RuntimeError("No features available for multiprocess intersect")
+
+        with mp.Pool(processes=num_workers) as pool:
+            results = pool.map(partial(intersect_features_chunk, gdf_b=gdf_b), chunks)
+
+        non_empty = [r for r in results if r is not None and len(r) > 0]
+        if non_empty:
+            result = pd.concat(non_empty, ignore_index=True)
+            result = gpd.GeoDataFrame(result, geometry='geometry', crs=gdf_a.crs)
+        else:
+            result = gpd.GeoDataFrame({'geometry': []}, geometry='geometry', crs=gdf_a.crs)
+
+        result.to_file(self.output_path, driver="GPKG")
+
+        return {'features_created': len(result), 'mode': 'multiprocess', 'workers': num_workers}
+
+
+class MP_R1_CreateConstantRaster_OS(MultiprocessBenchmarkOS):
+    """Multiprocess benchmark: Create Constant Raster using Rasterio"""
+
+    def __init__(self):
+        super(MP_R1_CreateConstantRaster_OS, self).__init__("MP_R1_CreateConstantRaster_OS", "raster_multiprocess")
+        self.size = settings.RASTER_CONFIG['constant_raster_size']
+        self.output_path = None
+
+    def setup(self):
+        self.output_path = os.path.join(settings.DATA_DIR, "MP_R1_constant_raster_os.tif")
+
+    def teardown(self):
+        if self.output_path and os.path.exists(self.output_path):
+            try:
+                os.remove(self.output_path)
+            except:
+                pass
+
+    def run_single(self):
+        height = self.size
+        width = self.size
+        transform = from_bounds(-180, -90, 180, 90, width, height)
+        data = np.ones((height, width), dtype=np.uint8)
+
+        profile = {
+            'driver': 'GTiff',
+            'height': height,
+            'width': width,
+            'count': 1,
+            'dtype': data.dtype,
+            'crs': 'EPSG:4326',
+            'transform': transform,
+            'compress': 'lzw'
+        }
+
+        with rasterio.open(self.output_path, 'w', **profile) as dst:
+            dst.write(data, 1)
+
+        return {'width': width, 'height': height, 'mode': 'single'}
+
+    def run_multiprocess(self, num_workers):
+        height = self.size
+        width = self.size
+        transform = from_bounds(-180, -90, 180, 90, width, height)
+
+        row_ranges = split_even_ranges(height, num_workers)
+        args_list = [(start, end, width, 1) for start, end in row_ranges]
+
+        if not args_list:
+            raise RuntimeError("No rows available for multiprocess raster creation")
+
+        with mp.Pool(processes=num_workers) as pool:
+            chunks = pool.map(create_constant_raster_chunk, args_list)
+
+        data = np.vstack(chunks)
+        profile = {
+            'driver': 'GTiff',
+            'height': data.shape[0],
+            'width': data.shape[1],
+            'count': 1,
+            'dtype': data.dtype,
+            'crs': 'EPSG:4326',
+            'transform': transform,
+            'compress': 'lzw'
+        }
+
+        with rasterio.open(self.output_path, 'w', **profile) as dst:
+            dst.write(data, 1)
+
+        return {'width': data.shape[1], 'height': data.shape[0], 'mode': 'multiprocess', 'workers': num_workers}
+
+
 class MultiprocessTestsOS(object):
     """Collection of open-source multiprocess benchmarks"""
     
@@ -357,6 +541,8 @@ class MultiprocessTestsOS(object):
             MP_V1_CreateFishnet_OS(),
             MP_V2_CreateRandomPoints_OS(),
             MP_V3_Buffer_OS(),
+            MP_V4_Intersect_OS(),
+            MP_R1_CreateConstantRaster_OS(),
         ]
 
 
@@ -364,6 +550,7 @@ if __name__ == '__main__':
     if not HAS_OS_LIBS:
         print("Open-source libraries not available. Please install:")
         print("  pip install geopandas shapely")
+        print("  pip install rasterio pyogrio numpy")
         sys.exit(1)
     
     print("Testing open-source multiprocess benchmarks...")
