@@ -102,8 +102,8 @@ class M2_RasterToPoint(BaseBenchmark):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
-        self.input_raster = os.path.join(gdb_path, "constant_raster")
+        # Use file-based raster instead of GDB raster
+        self.input_raster = os.path.join(settings.DATA_DIR, "constant_raster.tif")
         self.output_fc = os.path.join(settings.DATA_DIR, "M2_ras_to_point.shp")
     
     def teardown(self):

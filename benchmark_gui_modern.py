@@ -47,6 +47,13 @@ COLORS = {
 }
 
 
+# 当前项目的 benchmark 数量用于 GUI 进度估算
+DEFAULT_ARCPY_REGULAR_BENCHMARKS = 12
+DEFAULT_ARCPY_MULTIPROCESS_BENCHMARKS = 5
+DEFAULT_OS_REGULAR_BENCHMARKS = 12
+DEFAULT_OS_MULTIPROCESS_BENCHMARKS = 3
+
+
 class ModernButton(tk.Canvas):
     """圆角按钮控件"""
     def __init__(self, parent, text, command=None, bg_color=None, fg_color=None,
@@ -68,8 +75,8 @@ class ModernButton(tk.Canvas):
         self.bind('<Leave>', self._on_leave)
         self.bind('<Button-1>', self._on_press)
         self.bind('<ButtonRelease-1>', self._on_release)
-
-        self._draw_button(self.bg_color)
+        # 延迟绘制，等待 Canvas 尺寸确定
+        self.after(10, lambda: self._draw_button(self.bg_color))
 
     def _lighten_color(self, hex_color, factor=0.15):
         """变亮颜色"""
@@ -240,79 +247,28 @@ class SettingsDialog(tk.Toplevel):
                            background=COLORS['bg_secondary'])
 
     def _create_ui(self):
-        """创建设置对话框UI"""
+        """创建设置对话框UI - 简化版"""
         # 主容器
-        main_frame = tk.Frame(self, bg=COLORS['bg_primary'], padx=20, pady=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame = tk.Frame(self, bg=COLORS['bg_primary'])
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Notebook (tabs)
-        self.notebook = ttk.Notebook(main_frame)
-        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        # 简化为垂直布局，不使用Notebook
+        canvas = tk.Canvas(main_frame, bg=COLORS['bg_primary'], highlightthickness=0)
+        scrollbar = tk.Scrollbar(main_frame, orient='vertical', command=canvas.yview)
+        content_frame = tk.Frame(canvas, bg=COLORS['bg_primary'])
 
-        # Create tabs
-        self.tab_basic = tk.Frame(self.notebook, bg=COLORS['bg_secondary'], padx=15, pady=15)
-        self.tab_scale = tk.Frame(self.notebook, bg=COLORS['bg_secondary'], padx=15, pady=15)
-        self.tab_results = tk.Frame(self.notebook, bg=COLORS['bg_secondary'], padx=15, pady=15)
+        content_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.create_window((0, 0), window=content_frame, anchor='nw', width=900)
+        canvas.configure(yscrollcommand=scrollbar.set)
 
-        self.notebook.add(self.tab_basic, text=self.sm.get_text('tab_basic'))
-        self.notebook.add(self.tab_scale, text=self.sm.get_text('tab_data_scale'))
-        self.notebook.add(self.tab_results, text=self.sm.get_text('tab_results'))
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Build each tab
-        self._create_basic_tab()
-        self._create_scale_tab()
-        self._create_results_tab()
-
-        # Buttons at bottom
-        btn_frame = tk.Frame(main_frame, bg=COLORS['bg_primary'], height=60)
-        btn_frame.pack(fill=tk.X, pady=(5, 0))
-        btn_frame.pack_propagate(False)
-
-        # Use standard tk buttons for settings dialog to avoid Canvas rendering issues
-        tk.Button(
-            btn_frame,
-            text=self.sm.get_text('btn_save_settings'),
-            bg=COLORS['accent_success'],
-            fg=COLORS['text_light'],
-            font=('Microsoft YaHei', 11),
-            relief='flat',
-            cursor='hand2',
-            width=12, height=1,
-            command=self._save_settings
-        ).pack(side=tk.RIGHT, padx=5, pady=10)
-
-        tk.Button(
-            btn_frame,
-            text=self.sm.get_text('btn_reset'),
-            bg=COLORS['accent_warning'],
-            fg=COLORS['text_light'],
-            font=('Microsoft YaHei', 11),
-            relief='flat',
-            cursor='hand2',
-            width=12, height=1,
-            command=self._reset_defaults
-        ).pack(side=tk.RIGHT, padx=5, pady=10)
-
-        tk.Button(
-            btn_frame,
-            text=self.sm.get_text('menu_exit'),
-            bg=COLORS['text_secondary'],
-            fg=COLORS['text_light'],
-            font=('Microsoft YaHei', 11),
-            relief='flat',
-            cursor='hand2',
-            width=12, height=1,
-            command=self.destroy
-        ).pack(side=tk.RIGHT, padx=5, pady=10)
-
-    def _create_basic_tab(self):
-        """创建基本设置标签页"""
-        # Language selection
-        lang_frame = tk.LabelFrame(self.tab_basic, text=self.sm.get_text('label_language'),
+        # 语言设置
+        lang_frame = tk.LabelFrame(content_frame, text=self.sm.get_text('label_language'),
                                    bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                                   font=('Microsoft YaHei', 12, 'bold'), padx=10, pady=10)
-        lang_frame.pack(fill=tk.X, pady=(0, 15))
-
+                                   font=('Microsoft YaHei', 11, 'bold'), padx=10, pady=10)
+        lang_frame.pack(fill=tk.X, pady=5, padx=5)
         self.lang_var = tk.StringVar(value=self.sm.get('language', 'zh'))
         tk.Radiobutton(lang_frame, text="中文", variable=self.lang_var, value='zh',
                       bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
@@ -321,129 +277,80 @@ class SettingsDialog(tk.Toplevel):
                       bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
                       font=('Microsoft YaHei', 11), selectcolor=COLORS['accent_primary']).pack(side=tk.LEFT, padx=10)
 
-        # Python paths
-        paths_frame = tk.LabelFrame(self.tab_basic, text="Python " + self.sm.get_text('menu_settings'),
-                                    bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                                    font=('Microsoft YaHei', 12, 'bold'), padx=10, pady=10)
-        paths_frame.pack(fill=tk.X, pady=(0, 15))
+        # Python路径
+        py_frame = tk.LabelFrame(content_frame, text="Python " + self.sm.get_text('menu_settings'),
+                                bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
+                                font=('Microsoft YaHei', 11, 'bold'), padx=10, pady=10)
+        py_frame.pack(fill=tk.X, pady=5, padx=5)
 
-        # Python 2.7
-        py27_frame = tk.Frame(paths_frame, bg=COLORS['bg_secondary'])
-        py27_frame.pack(fill=tk.X, pady=5)
-
-        tk.Label(py27_frame, text=self.sm.get_text('label_python27'), width=18,
-                bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                font=('Microsoft YaHei', 11), anchor='w').pack(side=tk.LEFT)
+        py27_row = tk.Frame(py_frame, bg=COLORS['bg_secondary'])
+        py27_row.pack(fill=tk.X, pady=3)
+        tk.Label(py27_row, text='Python 2.7:', bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
         self.py27_var = tk.StringVar(value=self.sm.get('python_paths.python27', ''))
-        tk.Entry(py27_frame, textvariable=self.py27_var, font=('Microsoft YaHei', 11),
-                bg='white', fg=COLORS['text_primary'], relief='solid', bd=1).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        ModernButton(py27_frame, text=self.sm.get_text('btn_browse'), bg_color=COLORS['accent_secondary'],
-                    width=80, height=30, font_size=10,
-                    command=lambda: self._browse_python(self.py27_var)).pack(side=tk.LEFT, padx=2)
-        ModernButton(py27_frame, text=self.sm.get_text('btn_verify'), bg_color=COLORS['accent_primary'],
-                    width=80, height=30, font_size=10,
-                    command=lambda: self._verify_python(self.py27_var.get(), '2.7')).pack(side=tk.LEFT, padx=2)
+        tk.Entry(py27_row, textvariable=self.py27_var, font=('Microsoft YaHei', 10), width=50).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        tk.Button(py27_row, text=self.sm.get_text('btn_browse'), command=lambda: self._browse_python(self.py27_var), bg=COLORS['accent_secondary'], fg='white', font=('Microsoft YaHei', 9)).pack(side=tk.LEFT, padx=2)
+        tk.Button(py27_row, text=self.sm.get_text('btn_verify'), command=lambda: self._verify_python(self.py27_var.get(), '2.7'), bg=COLORS['accent_primary'], fg='white', font=('Microsoft YaHei', 9)).pack(side=tk.LEFT, padx=2)
 
-        # Python 3.x
-        py3_frame = tk.Frame(paths_frame, bg=COLORS['bg_secondary'])
-        py3_frame.pack(fill=tk.X, pady=5)
-
-        tk.Label(py3_frame, text=self.sm.get_text('label_python3'), width=18,
-                bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                font=('Microsoft YaHei', 11), anchor='w').pack(side=tk.LEFT)
+        py3_row = tk.Frame(py_frame, bg=COLORS['bg_secondary'])
+        py3_row.pack(fill=tk.X, pady=3)
+        tk.Label(py3_row, text='Python 3.x:', bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
         self.py3_var = tk.StringVar(value=self.sm.get('python_paths.python3', ''))
-        tk.Entry(py3_frame, textvariable=self.py3_var, font=('Microsoft YaHei', 11),
-                bg='white', fg=COLORS['text_primary'], relief='solid', bd=1).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        ModernButton(py3_frame, text=self.sm.get_text('btn_browse'), bg_color=COLORS['accent_secondary'],
-                    width=80, height=30, font_size=10,
-                    command=lambda: self._browse_python(self.py3_var)).pack(side=tk.LEFT, padx=2)
-        ModernButton(py3_frame, text=self.sm.get_text('btn_verify'), bg_color=COLORS['accent_primary'],
-                    width=80, height=30, font_size=10,
-                    command=lambda: self._verify_python(self.py3_var.get(), '3.x')).pack(side=tk.LEFT, padx=2)
+        tk.Entry(py3_row, textvariable=self.py3_var, font=('Microsoft YaHei', 10), width=50).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        tk.Button(py3_row, text=self.sm.get_text('btn_browse'), command=lambda: self._browse_python(self.py3_var), bg=COLORS['accent_secondary'], fg='white', font=('Microsoft YaHei', 9)).pack(side=tk.LEFT, padx=2)
+        tk.Button(py3_row, text=self.sm.get_text('btn_verify'), command=lambda: self._verify_python(self.py3_var.get(), '3.x'), bg=COLORS['accent_primary'], fg='white', font=('Microsoft YaHei', 9)).pack(side=tk.LEFT, padx=2)
 
-        # Test settings
-        test_frame = tk.LabelFrame(self.tab_basic, text=self.sm.get_text('settings_title'),
-                                   bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                                   font=('Microsoft YaHei', 12, 'bold'), padx=10, pady=10)
-        test_frame.pack(fill=tk.X, pady=(0, 15))
+        # 测试设置
+        test_frame = tk.LabelFrame(content_frame, text=self.sm.get_text('settings_title'),
+                                  bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
+                                  font=('Microsoft YaHei', 11, 'bold'), padx=10, pady=10)
+        test_frame.pack(fill=tk.X, pady=5, padx=5)
 
-        # Runs
-        runs_frame = tk.Frame(test_frame, bg=COLORS['bg_secondary'])
-        runs_frame.pack(fill=tk.X, pady=5)
-        tk.Label(runs_frame, text=self.sm.get_text('label_runs'), width=18,
-                bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                font=('Microsoft YaHei', 11), anchor='w').pack(side=tk.LEFT)
+        runs_row = tk.Frame(test_frame, bg=COLORS['bg_secondary'])
+        runs_row.pack(fill=tk.X, pady=2)
+        tk.Label(runs_row, text=self.sm.get_text('label_runs'), bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
         self.runs_var = tk.IntVar(value=self.sm.get('test_settings.runs', 3))
-        tk.Spinbox(runs_frame, from_=1, to=10, textvariable=self.runs_var, width=10,
-                  font=('Microsoft YaHei', 11)).pack(side=tk.LEFT, padx=5)
+        tk.Spinbox(runs_row, from_=1, to=10, textvariable=self.runs_var, width=8, font=('Microsoft YaHei', 10)).pack(side=tk.LEFT, padx=5)
 
-        # Warmup
-        warmup_frame = tk.Frame(test_frame, bg=COLORS['bg_secondary'])
-        warmup_frame.pack(fill=tk.X, pady=5)
-        tk.Label(warmup_frame, text=self.sm.get_text('label_warmup'), width=18,
-                bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                font=('Microsoft YaHei', 11), anchor='w').pack(side=tk.LEFT)
+        warmup_row = tk.Frame(test_frame, bg=COLORS['bg_secondary'])
+        warmup_row.pack(fill=tk.X, pady=2)
+        tk.Label(warmup_row, text=self.sm.get_text('label_warmup'), bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
         self.warmup_var = tk.IntVar(value=self.sm.get('test_settings.warmup', 1))
-        tk.Spinbox(warmup_frame, from_=0, to=5, textvariable=self.warmup_var, width=10,
-                  font=('Microsoft YaHei', 11)).pack(side=tk.LEFT, padx=5)
+        tk.Spinbox(warmup_row, from_=0, to=5, textvariable=self.warmup_var, width=8, font=('Microsoft YaHei', 10)).pack(side=tk.LEFT, padx=5)
 
-        # Multiprocess
+        # 选项复选框
         self.mp_var = tk.BooleanVar(value=self.sm.get('test_settings.enable_multiprocess', False))
-        mp_frame2 = tk.Frame(test_frame, bg='white', padx=8, pady=5,
-                            highlightbackground=COLORS['border'], highlightthickness=1)
-        mp_frame2.pack(fill=tk.X, pady=5)
-        tk.Checkbutton(mp_frame2, text=self.sm.get_text('chk_multiprocess'), variable=self.mp_var,
-                      bg='white', fg=COLORS['text_primary'],
-                      font=('Microsoft YaHei', 12), selectcolor=COLORS['accent_primary'],
-                      activebackground='white', cursor='hand2').pack(anchor=tk.W)
+        cb_frame = tk.Frame(test_frame, bg='white', padx=10, pady=8, highlightbackground='black', highlightthickness=2)
+        cb_frame.pack(fill=tk.X, pady=5)
+        tk.Checkbutton(cb_frame, text=self.sm.get_text('chk_multiprocess'), variable=self.mp_var,
+                      bg='white', fg=COLORS['text_primary'], font=('Microsoft YaHei', 12),
+                      selectcolor='white', activebackground='white', cursor='hand2').pack(anchor=tk.W)
 
-        # Workers
-        workers_frame = tk.Frame(test_frame, bg=COLORS['bg_secondary'])
-        workers_frame.pack(fill=tk.X, pady=5)
-        tk.Label(workers_frame, text=self.sm.get_text('label_workers'), width=18,
-                bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                font=('Microsoft YaHei', 11), anchor='w').pack(side=tk.LEFT)
-        self.workers_var = tk.IntVar(value=self.sm.get('test_settings.mp_workers', 4))
-        tk.Spinbox(workers_frame, from_=2, to=16, textvariable=self.workers_var, width=10,
-                  font=('Microsoft YaHei', 11)).pack(side=tk.LEFT, padx=5)
-
-        # Open-source
         self.os_var = tk.BooleanVar(value=self.sm.get('test_settings.enable_opensource', False))
-        os_frame2 = tk.Frame(test_frame, bg='white', padx=8, pady=5,
-                            highlightbackground=COLORS['border'], highlightthickness=1)
-        os_frame2.pack(fill=tk.X, pady=5)
-        tk.Checkbutton(os_frame2, text=self.sm.get_text('chk_opensource'), variable=self.os_var,
-                      bg='white', fg=COLORS['text_primary'],
-                      font=('Microsoft YaHei', 12), selectcolor=COLORS['accent_primary'],
-                      activebackground='white', cursor='hand2').pack(anchor=tk.W)
+        cb_frame2 = tk.Frame(test_frame, bg='white', padx=10, pady=8, highlightbackground='black', highlightthickness=2)
+        cb_frame2.pack(fill=tk.X, pady=5)
+        tk.Checkbutton(cb_frame2, text=self.sm.get_text('chk_opensource'), variable=self.os_var,
+                      bg='white', fg=COLORS['text_primary'], font=('Microsoft YaHei', 12),
+                      selectcolor='white', activebackground='white', cursor='hand2').pack(anchor=tk.W)
 
-    def _create_scale_tab(self):
-        """创建数据规模标签页"""
-        # Scale selection
-        scale_select_frame = tk.Frame(self.tab_scale, bg=COLORS['bg_secondary'])
-        scale_select_frame.pack(fill=tk.X, pady=(0, 15))
+        # 数据规模
+        scale_frame = tk.LabelFrame(content_frame, text=self.sm.get_text('label_scale'),
+                                   bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
+                                   font=('Microsoft YaHei', 11, 'bold'), padx=10, pady=10)
+        scale_frame.pack(fill=tk.X, pady=5, padx=5)
 
-        tk.Label(scale_select_frame, text=self.sm.get_text('label_scale'),
-                bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                font=('Microsoft YaHei', 11)).pack(side=tk.LEFT, padx=5)
+        scale_select = tk.Frame(scale_frame, bg=COLORS['bg_secondary'])
+        scale_select.pack(fill=tk.X, pady=(0, 10))
         self.edit_scale_var = tk.StringVar(value=self.sm.get('test_settings.data_scale', 'tiny'))
+        tk.OptionMenu(scale_select, self.edit_scale_var, 'tiny', 'small', 'standard', 'medium', 'large',
+                     command=lambda _: self._load_scale_settings()).pack(side=tk.LEFT, padx=5)
+        tk.Button(scale_select, text=self.sm.get_text('btn_reset'), bg=COLORS['accent_secondary'],
+                 fg='white', font=('Microsoft YaHei', 9), command=self._reset_current_scale).pack(side=tk.LEFT, padx=10)
 
-        scale_menu = tk.OptionMenu(scale_select_frame, self.edit_scale_var,
-                                   *['tiny', 'small', 'standard', 'medium', 'large'])
-        scale_menu.config(font=('Microsoft YaHei', 11), bg=COLORS['bg_secondary'],
-                         fg=COLORS['text_primary'], relief='solid', bd=1,
-                         highlightbackground=COLORS['border'], highlightthickness=1)
-        scale_menu.pack(side=tk.LEFT, padx=5)
-        self.edit_scale_var.trace('w', lambda *args: self._load_scale_settings())
+        # 参数设置区域
+        self.scale_params_frame = tk.Frame(scale_frame, bg=COLORS['bg_secondary'])
+        self.scale_params_frame.pack(fill=tk.X)
 
-        ModernButton(scale_select_frame, text=self.sm.get_text('btn_reset'),
-                    bg_color=COLORS['accent_secondary'], width=120, height=32, font_size=11,
-                    command=self._reset_current_scale).pack(side=tk.LEFT, padx=20)
-
-        # Parameter fields
-        params_frame = tk.Frame(self.tab_scale, bg=COLORS['bg_secondary'])
-        params_frame.pack(fill=tk.BOTH, expand=True)
-
+        self.scale_param_vars = {}
         params = [
             ('fishnet_rows', self.sm.get_text('param_fishnet')),
             ('random_points', self.sm.get_text('param_random_points')),
@@ -454,107 +361,59 @@ class SettingsDialog(tk.Toplevel):
             ('constant_raster_size', self.sm.get_text('param_raster')),
         ]
 
-        self.scale_param_vars = {}
         for key, label in params:
-            frame = tk.Frame(params_frame, bg=COLORS['bg_secondary'])
-            frame.pack(fill=tk.X, pady=8)
-
-            tk.Label(frame, text=label, width=30,
-                    bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                    font=('Microsoft YaHei', 11), anchor='w').pack(side=tk.LEFT)
+            row = tk.Frame(self.scale_params_frame, bg=COLORS['bg_secondary'])
+            row.pack(fill=tk.X, pady=3)
+            tk.Label(row, text=label, width=30, bg=COLORS['bg_secondary'],
+                    font=('Microsoft YaHei', 10), anchor='w').pack(side=tk.LEFT)
             var = tk.IntVar()
             self.scale_param_vars[key] = var
-            tk.Spinbox(frame, from_=1, to=10000000, textvariable=var, width=15,
-                      font=('Microsoft YaHei', 11)).pack(side=tk.LEFT, padx=5)
+            tk.Spinbox(row, from_=1, to=10000000, textvariable=var, width=12,
+                      font=('Microsoft YaHei', 10)).pack(side=tk.LEFT, padx=5)
 
         self._load_scale_settings()
 
-    def _create_results_tab(self):
-        """创建结果设置标签页"""
-        # Result save options
-        save_frame = tk.LabelFrame(self.tab_results, text=self.sm.get_text('tab_results'),
-                                   bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                                   font=('Microsoft YaHei', 12, 'bold'), padx=10, pady=10)
-        save_frame.pack(fill=tk.X, pady=(0, 15))
+        # 结果设置
+        result_frame = tk.LabelFrame(content_frame, text=self.sm.get_text('tab_results'),
+                                    bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
+                                    font=('Microsoft YaHei', 11, 'bold'), padx=10, pady=10)
+        result_frame.pack(fill=tk.X, pady=5, padx=5)
 
         self.save_py2_var = tk.BooleanVar(value=self.sm.get('result_settings.save_py2_results', True))
-        cb_frame1 = tk.Frame(save_frame, bg='white', padx=8, pady=4,
-                            highlightbackground=COLORS['border'], highlightthickness=1)
-        cb_frame1.pack(fill=tk.X, pady=3)
-        tk.Checkbutton(cb_frame1, text=self.sm.get_text('chk_py2'), variable=self.save_py2_var,
-                      bg='white', fg=COLORS['text_primary'],
-                      font=('Microsoft YaHei', 11), selectcolor=COLORS['accent_primary'],
-                      activebackground='white', cursor='hand2').pack(anchor=tk.W)
+        r1 = tk.Frame(result_frame, bg='white', padx=10, pady=5, highlightbackground='black', highlightthickness=2)
+        r1.pack(fill=tk.X, pady=3)
+        tk.Checkbutton(r1, text=self.sm.get_text('chk_py2'), variable=self.save_py2_var,
+                      bg='white', fg=COLORS['text_primary'], font=('Microsoft YaHei', 11),
+                      selectcolor='white', activebackground='white').pack(anchor=tk.W)
 
         self.save_py3_var = tk.BooleanVar(value=self.sm.get('result_settings.save_py3_results', True))
-        cb_frame2 = tk.Frame(save_frame, bg='white', padx=8, pady=4,
-                            highlightbackground=COLORS['border'], highlightthickness=1)
-        cb_frame2.pack(fill=tk.X, pady=3)
-        tk.Checkbutton(cb_frame2, text=self.sm.get_text('chk_py3'), variable=self.save_py3_var,
-                      bg='white', fg=COLORS['text_primary'],
-                      font=('Microsoft YaHei', 11), selectcolor=COLORS['accent_primary'],
-                      activebackground='white', cursor='hand2').pack(anchor=tk.W)
+        r2 = tk.Frame(result_frame, bg='white', padx=10, pady=5, highlightbackground='black', highlightthickness=2)
+        r2.pack(fill=tk.X, pady=3)
+        tk.Checkbutton(r2, text=self.sm.get_text('chk_py3'), variable=self.save_py3_var,
+                      bg='white', fg=COLORS['text_primary'], font=('Microsoft YaHei', 11),
+                      selectcolor='white', activebackground='white').pack(anchor=tk.W)
 
         self.save_os_var = tk.BooleanVar(value=self.sm.get('result_settings.save_os_results', True))
-        cb_frame3 = tk.Frame(save_frame, bg='white', padx=8, pady=4,
-                            highlightbackground=COLORS['border'], highlightthickness=1)
-        cb_frame3.pack(fill=tk.X, pady=3)
-        tk.Checkbutton(cb_frame3, text=self.sm.get_text('chk_os'), variable=self.save_os_var,
-                      bg='white', fg=COLORS['text_primary'],
-                      font=('Microsoft YaHei', 11), selectcolor=COLORS['accent_primary'],
-                      activebackground='white', cursor='hand2').pack(anchor=tk.W)
+        r3 = tk.Frame(result_frame, bg='white', padx=10, pady=5, highlightbackground='black', highlightthickness=2)
+        r3.pack(fill=tk.X, pady=3)
+        tk.Checkbutton(r3, text=self.sm.get_text('chk_os'), variable=self.save_os_var,
+                      bg='white', fg=COLORS['text_primary'], font=('Microsoft YaHei', 11),
+                      selectcolor='white', activebackground='white').pack(anchor=tk.W)
 
-        # Timestamp folder option
-        self.timestamp_var = tk.BooleanVar(value=self.sm.get('result_settings.use_timestamp_folder', True))
-        ts_frame = tk.Frame(self.tab_results, bg='white', padx=8, pady=5,
-                           highlightbackground=COLORS['border'], highlightthickness=1)
-        ts_frame.pack(fill=tk.X, pady=10)
-        tk.Checkbutton(ts_frame, text=self.sm.get_text('chk_timestamp_folder'), variable=self.timestamp_var,
-                      bg='white', fg=COLORS['text_primary'],
-                      font=('Microsoft YaHei', 11), selectcolor=COLORS['accent_primary'],
-                      activebackground='white', cursor='hand2').pack(anchor=tk.W)
+        # 底部按钮 - 固定在主窗口底部，不在滚动区域内
+        btn_frame = tk.Frame(self, bg=COLORS['bg_primary'], padx=10, pady=10)
+        btn_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
-        # Remember settings option
-        self.remember_var = tk.BooleanVar(value=self.sm.get('ui_settings.remember_last_settings', True))
-        rs_frame = tk.Frame(self.tab_results, bg='white', padx=8, pady=5,
-                           highlightbackground=COLORS['border'], highlightthickness=1)
-        rs_frame.pack(fill=tk.X, pady=10)
-        tk.Checkbutton(rs_frame, text=self.sm.get_text('chk_remember_settings'), variable=self.remember_var,
-                      bg='white', fg=COLORS['text_primary'],
-                      font=('Microsoft YaHei', 11), selectcolor=COLORS['accent_primary'],
-                      activebackground='white', cursor='hand2').pack(anchor=tk.W)
+        tk.Button(btn_frame, text=self.sm.get_text('menu_exit'), bg=COLORS['text_secondary'],
+                 fg=COLORS['text_light'], font=('Microsoft YaHei', 11), relief='flat',
+                 cursor='hand2', width=10, command=self.destroy).pack(side=tk.RIGHT, padx=5)
+        tk.Button(btn_frame, text=self.sm.get_text('btn_reset'), bg=COLORS['accent_warning'],
+                 fg=COLORS['text_light'], font=('Microsoft YaHei', 11), relief='flat',
+                 cursor='hand2', width=10, command=self._reset_defaults).pack(side=tk.RIGHT, padx=5)
+        tk.Button(btn_frame, text=self.sm.get_text('btn_save_settings'), bg=COLORS['accent_success'],
+                 fg=COLORS['text_light'], font=('Microsoft YaHei', 11), relief='flat',
+                 cursor='hand2', width=10, command=self._save_settings).pack(side=tk.RIGHT, padx=5)
 
-        # Retention days
-        retention_frame = tk.Frame(self.tab_results, bg=COLORS['bg_secondary'])
-        retention_frame.pack(fill=tk.X, pady=10)
-
-        tk.Label(retention_frame, text=self.sm.get_text('label_retention'),
-                bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                font=('Microsoft YaHei', 11)).pack(side=tk.LEFT, padx=5)
-        self.retention_var = tk.IntVar(value=self.sm.get('result_settings.retention_days', 30))
-        tk.Spinbox(retention_frame, from_=0, to=365, textvariable=self.retention_var, width=10,
-                  font=('Microsoft YaHei', 11)).pack(side=tk.LEFT, padx=5)
-        tk.Label(retention_frame, text=self.sm.get_text('retention_forever'),
-                bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
-                font=('Microsoft YaHei', 11)).pack(side=tk.LEFT, padx=5)
-
-        # Font scale
-        font_frame = tk.LabelFrame(self.tab_results, text=self.sm.get_text('label_font_scale'),
-                                   bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                                   font=('Microsoft YaHei', 12, 'bold'), padx=10, pady=10)
-        font_frame.pack(fill=tk.X, pady=10)
-
-        self.font_scale_var = tk.DoubleVar(value=self.sm.get('ui_settings.font_scale', 1.0))
-        font_options = [
-            (self.sm.get_text('font_scale_small'), 1.0),
-            (self.sm.get_text('font_scale_normal'), 1.2),
-            (self.sm.get_text('font_scale_large'), 1.5),
-            (self.sm.get_text('font_scale_huge'), 2.0),
-        ]
-        for text, value in font_options:
-            tk.Radiobutton(font_frame, text=text, variable=self.font_scale_var, value=value,
-                          bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
-                          font=('Microsoft YaHei', 11), selectcolor=COLORS['accent_primary']).pack(anchor=tk.W, pady=3)
 
     def _browse_python(self, var):
         """浏览选择Python可执行文件"""
@@ -574,6 +433,12 @@ class SettingsDialog(tk.Toplevel):
             )
             return
 
+        def notify(kind, title, body):
+            def _show():
+                dialog = getattr(messagebox, kind)
+                dialog(title, body, parent=self)
+            self.after(0, _show)
+
         def verify():
             try:
                 result = subprocess.run(
@@ -583,17 +448,20 @@ class SettingsDialog(tk.Toplevel):
                     timeout=10
                 )
                 if result.returncode == 0:
-                    messagebox.showinfo(
+                    notify(
+                        'showinfo',
                         self.sm.get_text('msg_verify_ok'),
                         "Python {}:\n{}".format(version, result.stdout.strip())
                     )
                 else:
-                    messagebox.showerror(
+                    notify(
+                        'showerror',
                         self.sm.get_text('msg_verify_fail'),
                         result.stderr
                     )
             except Exception as e:
-                messagebox.showerror(
+                notify(
+                    'showerror',
                     self.sm.get_text('msg_verify_fail'),
                     str(e)
                 )
@@ -772,6 +640,20 @@ class ModernBenchmarkGUI(object):
         weight = 'bold' if bold else 'normal'
         return ('Microsoft YaHei', scaled_size, weight)
 
+    def _create_big_checkbox(self, parent, text, variable):
+        """创建大号复选框，使用浅色背景让勾选更明显"""
+        frame = tk.Frame(parent, bg='white')
+        frame.pack(anchor='w', fill='x')
+
+        # 使用更大的指示器大小和浅色选中背景
+        cb = tk.Checkbutton(frame, text=text, variable=variable,
+                           bg='white', fg=COLORS['text_primary'],
+                           font=self._font(15), selectcolor='#e3f2fd',  # 浅蓝色背景
+                           activebackground='white', cursor='hand2',
+                           height=1, anchor='w', padx=5, pady=3)
+        cb.pack(anchor='w', fill='x')
+        return cb
+
     def _create_ui(self):
         """创建主UI"""
         # 顶部标题栏
@@ -832,9 +714,10 @@ class ModernBenchmarkGUI(object):
         tools_frame.pack(side='right', padx=20)
 
         # 设置按钮
-        ModernButton(tools_frame, text=' Settings', bg_color=COLORS['accent_secondary'],
-                    width=100, height=36, font_size=11,
-                    command=self._open_settings).pack(side='right', padx=5)
+        tk.Button(tools_frame, text=' Settings', bg=COLORS['accent_secondary'],
+                 fg=COLORS['text_light'], relief='flat', cursor='hand2',
+                 font=self._font(11), padx=15, pady=5,
+                 command=self._open_settings).pack(side='right', padx=5)
 
         # 语言切换按钮
         self.lang_btn = tk.Button(tools_frame, text='English', bg=COLORS['accent_secondary'],
@@ -856,17 +739,23 @@ class ModernBenchmarkGUI(object):
                 bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
                 font=self._font(11)).pack(anchor='w')
 
-        self.scale_var = tk.StringVar(value=self.sm.get('test_settings.data_scale', 'tiny'))
-        scale_names = {
+        # Store scale names mapping for both directions
+        self.scale_names = {
             'tiny': self.sm.get_text('scale_tiny'),
             'small': self.sm.get_text('scale_small'),
             'standard': self.sm.get_text('scale_standard'),
             'medium': self.sm.get_text('scale_medium'),
             'large': self.sm.get_text('scale_large')
         }
+        # Reverse mapping: display name -> key
+        self.scale_name_to_key = {v: k for k, v in self.scale_names.items()}
+
+        # Default value is the display name
+        default_key = self.sm.get('test_settings.data_scale', 'tiny')
+        self.scale_var = tk.StringVar(value=self.scale_names.get(default_key, default_key))
 
         self.scale_menu = tk.OptionMenu(scale_frame, self.scale_var,
-                                       *[scale_names[k] for k in ['tiny', 'small', 'standard', 'medium', 'large']])
+                                       *[self.scale_names[k] for k in ['tiny', 'small', 'standard', 'medium', 'large']])
         self.scale_menu.config(font=self._font(12), bg=COLORS['bg_secondary'],
                               fg=COLORS['text_primary'], relief='flat',
                               highlightbackground=COLORS['border'], highlightthickness=1)
@@ -880,36 +769,29 @@ class ModernBenchmarkGUI(object):
         content = tk.Frame(card, bg=COLORS['bg_secondary'])
         content.pack(fill='x', padx=15, pady=10)
 
-        # 多进程选项
+        # 多进程选项 - 使用大号自定义复选框
         self.mp_var = tk.BooleanVar(value=self.sm.get('test_settings.enable_multiprocess', False))
-        mp_frame = tk.Frame(content, bg='white', padx=10, pady=8,
-                           highlightbackground=COLORS['border'], highlightthickness=1)
-        mp_frame.pack(fill='x', pady=5)
-        mp_check = tk.Checkbutton(mp_frame, text=self.sm.get_text('chk_multiprocess'),
-                                 variable=self.mp_var, bg='white',
-                                 fg=COLORS['text_primary'], font=self._font(13),
-                                 selectcolor=COLORS['accent_primary'],
-                                 activebackground='white', cursor='hand2')
-        mp_check.pack(anchor='w')
+        mp_frame = tk.Frame(content, bg='white', padx=15, pady=12,
+                           highlightbackground='black', highlightthickness=2)
+        mp_frame.pack(fill='x', pady=8)
+        self._create_big_checkbox(mp_frame, self.sm.get_text('chk_multiprocess'), self.mp_var)
 
-        # 开源库选项
+        # 开源库选项 - 使用大号自定义复选框
         self.os_var = tk.BooleanVar(value=self.sm.get('test_settings.enable_opensource', False))
-        os_frame = tk.Frame(content, bg='white', padx=10, pady=8,
-                           highlightbackground=COLORS['border'], highlightthickness=1)
-        os_frame.pack(fill='x', pady=5)
-        os_check = tk.Checkbutton(os_frame, text=self.sm.get_text('chk_opensource'),
-                                 variable=self.os_var, bg='white',
-                                 fg=COLORS['text_primary'], font=self._font(13),
-                                 selectcolor=COLORS['accent_primary'],
-                                 activebackground='white', cursor='hand2')
-        os_check.pack(anchor='w')
+        os_frame = tk.Frame(content, bg='white', padx=15, pady=12,
+                           highlightbackground='black', highlightthickness=2)
+        os_frame.pack(fill='x', pady=8)
+        self._create_big_checkbox(os_frame, self.sm.get_text('chk_opensource'), self.os_var)
 
         # 打开文件夹按钮
-        folder_btn = tk.Button(content, text=' Open Temp Folder',
-                              bg=COLORS['bg_primary'], fg=COLORS['accent_primary'],
-                              relief='flat', font=self._font(11), cursor='hand2',
-                              command=self._open_temp_folder)
-        folder_btn.pack(fill='x', pady=(15, 0), ipady=8)
+        self.open_temp_btn = tk.Button(
+            content,
+            text=self.sm.get_text('btn_open_temp'),
+            bg=COLORS['bg_primary'], fg=COLORS['accent_primary'],
+            relief='flat', font=self._font(11), cursor='hand2',
+            command=self._open_temp_folder
+        )
+        self.open_temp_btn.pack(fill='x', pady=(15, 0), ipady=8)
 
     def _create_progress_card(self, parent):
         """进度卡片"""
@@ -924,9 +806,18 @@ class ModernBenchmarkGUI(object):
                 bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
                 font=self._font(11)).pack(anchor='w')
 
-        self.total_progress = ttk.Progressbar(content, style='Modern.Horizontal.TProgressbar',
-                                             mode='determinate', length=100)
-        self.total_progress.pack(fill='x', pady=(5, 15))
+        progress_wrap = tk.Frame(content, bg=COLORS['bg_secondary'])
+        progress_wrap.pack(fill='x', pady=(5, 15))
+
+        self.total_progress = tk.Canvas(
+            progress_wrap,
+            height=int(22 * self.font_scale),
+            bg=COLORS['border'],
+            highlightthickness=0,
+            bd=0
+        )
+        self.total_progress.pack(fill='x')
+        self.total_progress.bind('<Configure>', self._on_total_progress_resize)
 
         # 当前测试
         tk.Label(content, text=self.sm.get_text('progress_current'),
@@ -948,23 +839,23 @@ class ModernBenchmarkGUI(object):
         btn_frame = tk.Frame(content, bg=COLORS['bg_secondary'])
         btn_frame.pack(fill='x', pady=(20, 0))
 
-        # 现代化按钮
-        self.run_btn = ModernButton(btn_frame, text=' Start Test',
-                                   bg_color=COLORS['accent_success'],
-                                   width=180, height=50, font_size=14,
-                                   command=self._start_test)
+        # 使用标准按钮避免渲染问题
+        self.run_btn = tk.Button(btn_frame, text=' Start Test',
+                                bg=COLORS['accent_success'], fg=COLORS['text_light'],
+                                relief='flat', cursor='hand2', font=self._font(14, bold=True),
+                                padx=30, pady=12, command=self._start_test)
         self.run_btn.pack(side='left', padx=(0, 10))
 
-        self.run_all_btn = ModernButton(btn_frame, text=' Run All Scales',
-                                       bg_color=COLORS['accent_warning'],
-                                       width=180, height=50, font_size=14,
-                                       command=self._start_all_scales)
+        self.run_all_btn = tk.Button(btn_frame, text=' Run All Scales',
+                                    bg=COLORS['accent_warning'], fg=COLORS['text_light'],
+                                    relief='flat', cursor='hand2', font=self._font(14, bold=True),
+                                    padx=30, pady=12, command=self._start_all_scales)
         self.run_all_btn.pack(side='left', padx=(0, 10))
 
-        self.stop_btn = ModernButton(btn_frame, text=' Stop',
-                                    bg_color=COLORS['accent_danger'],
-                                    width=180, height=50, font_size=14,
-                                    command=self._stop_test)
+        self.stop_btn = tk.Button(btn_frame, text=' Stop',
+                                 bg=COLORS['accent_danger'], fg=COLORS['text_light'],
+                                 relief='flat', cursor='hand2', font=self._font(14, bold=True),
+                                 padx=30, pady=12, command=self._stop_test)
         self.stop_btn.pack(side='left')
 
     def _create_log_card(self, parent):
@@ -1038,7 +929,17 @@ class ModernBenchmarkGUI(object):
         self.root.clipboard_append(self.log_text.get(1.0, 'end'))
 
     def _open_temp_folder(self):
-        temp_dir = self.sm.get_temp_dir()
+        """Open the temp folder currently being used by the running or last test"""
+        # If a test is running or has run, use the current test's directory
+        if hasattr(self, 'current_timestamp') and self.current_timestamp:
+            temp_dir = os.path.join(
+                self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data'),
+                self.current_timestamp
+            )
+        else:
+            # No test has run yet, use base data directory
+            temp_dir = self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data')
+
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
         try:
@@ -1046,25 +947,124 @@ class ModernBenchmarkGUI(object):
         except:
             pass
 
+    def _find_result_files(self, root_dir, keyword):
+        """Recursively find benchmark result JSON files under a root folder."""
+        matches = []
+        if not root_dir or not os.path.isdir(root_dir):
+            return matches
+
+        for dirpath, _, filenames in os.walk(root_dir):
+            for filename in filenames:
+                lowered = filename.lower()
+                if lowered.endswith('.json') and keyword in lowered:
+                    matches.append(os.path.join(dirpath, filename))
+        return sorted(matches)
+
     def _open_settings(self):
         """打开设置对话框"""
         SettingsDialog(self.root, self.sm)
 
+    def _on_total_progress_resize(self, event=None):
+        """Canvas 尺寸变化时重绘总进度条"""
+        self._render_total_progress()
+
+    def _estimate_total_progress_units(self):
+        """估算当前测试流程的总进度单位数"""
+        py27_path = self.sm.get('python_paths.python27', '')
+        py3_path = self.sm.get('python_paths.python3', '')
+        has_py27 = bool(py27_path and os.path.exists(py27_path))
+        has_py3 = bool(py3_path and os.path.exists(py3_path))
+        include_mp = bool(self.mp_var.get())
+        include_os = bool(self.os_var.get())
+
+        total = 0
+
+        if has_py27:
+            total += 1 + DEFAULT_ARCPY_REGULAR_BENCHMARKS
+            if include_mp:
+                total += DEFAULT_ARCPY_MULTIPROCESS_BENCHMARKS
+
+        if has_py3:
+            total += 1 + DEFAULT_ARCPY_REGULAR_BENCHMARKS
+            if include_mp:
+                total += DEFAULT_ARCPY_MULTIPROCESS_BENCHMARKS
+
+            if include_os:
+                total += 1 + DEFAULT_ARCPY_REGULAR_BENCHMARKS + DEFAULT_OS_REGULAR_BENCHMARKS
+                if include_mp:
+                    total += DEFAULT_ARCPY_MULTIPROCESS_BENCHMARKS + DEFAULT_OS_MULTIPROCESS_BENCHMARKS
+
+        return total * max(1, len(self.test_queue))
+
+    def _progress_text(self, current, total):
+        """格式化进度条内部显示文本"""
+        label = self.sm.get_text('progress_total')
+        if total <= 0:
+            return "{} 0/0 (0%)".format(label)
+
+        width = max(len(str(total)), 2)
+        current_str = ("{:0" + str(width) + "d}").format(max(0, current))
+        total_str = ("{:0" + str(width) + "d}").format(total)
+        percentage = int(round(float(current) / float(total) * 100)) if total > 0 else 0
+        return "{} {}/{} ({}%)".format(label, current_str, total_str, percentage)
+
+    def _render_total_progress(self):
+        """重绘总进度条"""
+        if not hasattr(self, 'total_progress'):
+            return
+
+        canvas = self.total_progress
+        width = max(canvas.winfo_width(), 1)
+        height = max(canvas.winfo_height(), int(22 * self.font_scale))
+        current = max(0, min(self.completed_tests, self.total_tests))
+        total = max(0, self.total_tests)
+
+        canvas.delete('all')
+        canvas.create_rectangle(0, 0, width, height, fill=COLORS['border'], outline=COLORS['border'])
+
+        if total > 0:
+            fill_width = int(float(current) / float(total) * width)
+            if fill_width > 0:
+                canvas.create_rectangle(
+                    0, 0, fill_width, height,
+                    fill=COLORS['accent_primary'],
+                    outline=COLORS['accent_primary']
+                )
+
+        percentage = float(current) / float(total) if total > 0 else 0
+        text_color = COLORS['text_primary'] if percentage < 0.5 else COLORS['text_light']
+        canvas.create_text(
+            width // 2,
+            height // 2,
+            text=self._progress_text(current, total),
+            fill=text_color,
+            font=self._font(10, bold=True)
+        )
+
+    def _advance_progress(self, increment=1, test_name=''):
+        """推进总进度"""
+        self._update_progress(self.completed_tests + increment, self.total_tests, test_name)
+
     def _update_progress(self, current, total, test_name=''):
         """更新进度显示"""
-        if total > 0:
-            percentage = (current / total) * 100
-            self.total_progress['value'] = percentage
-            self.completed_tests = current
-            self.total_tests = total
+        total = max(0, int(total))
+        current = max(0, int(current))
+        if total > 0 and current > total:
+            current = total
 
-            # Update ETA
-            if self.start_time and current > 0:
-                elapsed = (datetime.now() - self.start_time).total_seconds()
-                avg_time = elapsed / current
-                remaining = avg_time * (total - current)
-                eta_str = str(timedelta(seconds=int(remaining)))
-                self.eta_label.config(text="{}: {}".format(self.sm.get_text('eta'), eta_str))
+        self.completed_tests = current
+        self.total_tests = total
+        self._render_total_progress()
+
+        # Update ETA
+        if total > 0 and self.start_time and current > 0:
+            elapsed = (datetime.now() - self.start_time).total_seconds()
+            avg_time = elapsed / current
+            remaining = avg_time * (total - current)
+            eta_str = str(timedelta(seconds=int(remaining)))
+            self.eta_label.config(text="{}: {}".format(self.sm.get_text('eta'), eta_str))
+        elif total <= 0:
+            self.eta_label.config(text="")
 
         if test_name:
             self.current_test_label.config(text=test_name)
@@ -1074,9 +1074,20 @@ class ModernBenchmarkGUI(object):
         if self.is_running:
             return
 
-        # Get selected scale
-        scale_text = self.scale_var.get()
-        scale = scale_text.split()[0] if ' ' in scale_text else scale_text
+        # Get selected scale - map display name back to key
+        scale_display = self.scale_var.get()
+        scale = self.scale_name_to_key.get(scale_display, 'tiny')
+
+        # Log the test parameters
+        self._log("=" * 60)
+        self._log("Test Configuration:")
+        self._log("  Scale: {} ({})".format(scale, scale_display))
+        self._log("  Data Scale Config: {}".format(self.sm.get_scale_config(scale)))
+        self._log("  Multiprocess: {}".format(self.mp_var.get()))
+        self._log("  Open Source: {}".format(self.os_var.get()))
+        self._log("  Python 2.7: {}".format(self.sm.get('python_paths.python27', 'Not set')))
+        self._log("  Python 3.x: {}".format(self.sm.get('python_paths.python3', 'Not set')))
+        self._log("=" * 60)
 
         self.test_queue = [scale]
         self._run_tests()
@@ -1100,6 +1111,18 @@ class ModernBenchmarkGUI(object):
         self.start_time = datetime.now()
         self.completed_tests = 0
 
+        # Generate timestamped output directory
+        self.current_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        self.current_output_dir = os.path.join(
+            self.sm.get('paths.data_dir', r'C:\temp\arcgis_benchmark_data'),
+            self.current_timestamp
+        )
+        self.root.after(0, lambda: self._log("Output directory: {}".format(self.current_output_dir)))
+        total_units = self._estimate_total_progress_units()
+        self.completed_tests = 0
+        self.total_tests = total_units
+        self.root.after(0, lambda t=total_units: self._update_progress(0, t))
+
         # Update UI state
         self.run_btn.config(state='disabled')
         self.run_all_btn.config(state='disabled')
@@ -1121,8 +1144,6 @@ class ModernBenchmarkGUI(object):
 
                 self._run_single_scale(scale)
 
-                self.root.after(0, lambda: self._update_progress(idx + 1, total_scales))
-
         except Exception as e:
             self.root.after(0, lambda: self._log("Error: {}".format(str(e)), "ERROR"))
 
@@ -1137,29 +1158,38 @@ class ModernBenchmarkGUI(object):
         if not py27_path or not os.path.exists(py27_path):
             self.root.after(0, lambda: self._log("Python 2.7 not found, skipping", "WARNING"))
         else:
-            self._run_python_benchmark(py27_path, scale, 'py2')
+            self._run_python_benchmark(py27_path, scale, 'py2', self.current_output_dir)
 
         if not py3_path or not os.path.exists(py3_path):
             self.root.after(0, lambda: self._log("Python 3.x not found, skipping", "WARNING"))
         else:
-            self._run_python_benchmark(py3_path, scale, 'py3')
+            self._run_python_benchmark(py3_path, scale, 'py3', self.current_output_dir)
 
             # Open source tests (Python 3 only)
             if self.os_var.get():
-                self._run_python_benchmark(py3_path, scale, 'os')
+                self._run_python_benchmark(py3_path, scale, 'os', self.current_output_dir)
 
-    def _run_python_benchmark(self, python_path, scale, test_type):
+    def _run_python_benchmark(self, python_path, scale, test_type, output_dir=None):
         """运行Python基准测试"""
         if self.should_stop:
             return
 
+        # Get script directory for absolute paths
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        run_benchmarks_path = os.path.join(script_dir, 'run_benchmarks.py')
+
         cmd = [
             python_path,
-            'run_benchmarks.py',
+            '-u',
+            run_benchmarks_path,
             '--scale', scale,
             '--runs', str(self.sm.get('test_settings.runs', 3)),
-            '--warmup', str(self.sm.get('test_settings.warmup', 1))
+            '--warmup', str(self.sm.get('test_settings.warmup', 1)),
+            '--generate-data'
         ]
+
+        if output_dir:
+            cmd.extend(['--output-dir', output_dir])
 
         if test_type == 'os':
             cmd.append('--opensource')
@@ -1171,14 +1201,25 @@ class ModernBenchmarkGUI(object):
         test_name = "{} ({})".format(test_type.upper(), scale)
         self.root.after(0, lambda: self.current_test_label.config(text=test_name))
         self.root.after(0, lambda: self._log("Running: {}".format(' '.join(cmd)), "CMD"))
+        self.root.after(0, lambda: self._advance_progress(1))
 
         try:
+            # Set working directory to script location
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+            env['PYTHONIOENCODING'] = 'utf-8'
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
+                cwd=script_dir
             )
 
             self.current_process = process
@@ -1187,9 +1228,12 @@ class ModernBenchmarkGUI(object):
                 if self.should_stop:
                     process.terminate()
                     break
-                line = line.strip()
-                if line:
-                    self.root.after(0, lambda l=line: self._log(l))
+                decoded_line = line.strip()
+                if decoded_line:
+                    if ('正在执行:' in decoded_line or
+                            'Running multiprocess comparison:' in decoded_line):
+                        self.root.after(0, lambda: self._advance_progress(1))
+                    self.root.after(0, lambda l=decoded_line: self._log(l))
 
             process.wait()
 
@@ -1228,12 +1272,118 @@ class ModernBenchmarkGUI(object):
         self.run_btn.config(state='normal')
         self.run_all_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
-        self.total_progress['value'] = 0
+        self.completed_tests = 0
+        self.total_tests = 0
+        self._render_total_progress()
         self.current_test_label.config(text=self.sm.get_text('status_ready'))
         self.eta_label.config(text="")
 
         elapsed = (datetime.now() - self.start_time).total_seconds() if self.start_time else 0
+        self._log("=" * 70, "SUCCESS")
         self._log("All tests completed in {:.1f}s".format(elapsed), "SUCCESS")
+        self._log("", "INFO")
+
+        # 生成对比报告
+        self._generate_comparison_report()
+
+    def _generate_comparison_report(self):
+        """生成对比报告"""
+        self._log("Generating comparison report...", "INFO")
+        try:
+            py3_path = self.sm.get('python_paths.python3', 'python')
+
+            results_dir = getattr(self, 'current_output_dir', None)
+            if not results_dir:
+                results_dir = os.path.join('results')
+            results_dir = os.path.abspath(results_dir)
+            output_dir = results_dir
+
+            raw_root = os.path.join(results_dir, 'data')
+            search_root = raw_root if os.path.isdir(raw_root) else results_dir
+
+            py2_files = self._find_result_files(search_root, 'benchmark_results_py2')
+            py3_files = self._find_result_files(search_root, 'benchmark_results_py3')
+            os_files = self._find_result_files(search_root, 'benchmark_results_os')
+            if not os_files:
+                os_files = self._find_result_files(search_root, 'opensource')
+
+            if not py2_files or not py3_files:
+                self._log("Skip comparison report: missing benchmark result files.", "ERROR")
+                if not py2_files:
+                    self._log("  Missing: benchmark_results_py2.json", "ERROR")
+                if not py3_files:
+                    self._log("  Missing: benchmark_results_py3.json", "ERROR")
+                if self.os_var.get() and not os_files:
+                    self._log("  Missing: benchmark_results_os.json", "ERROR")
+                return
+
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            analyze_results_path = os.path.join(script_dir, 'analyze_results.py')
+            cmd = [
+                py3_path,
+                '-u',
+                analyze_results_path,
+                '--results-dir', results_dir,
+                '--output-dir', output_dir
+            ]
+
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+            env['PYTHONIOENCODING'] = 'utf-8'
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
+                cwd=script_dir
+            )
+
+            for line in process.stdout:
+                decoded_line = line.strip()
+                if decoded_line:
+                    self._log(decoded_line)
+
+            process.wait()
+
+            if process.returncode == 0:
+                self._log("Comparison report generated successfully!", "SUCCESS")
+            else:
+                self._log("Failed to generate comparison report (code: {})".format(process.returncode), "ERROR")
+
+        except Exception as e:
+            self._log("Error generating report: {}".format(str(e)), "ERROR")
+
+        output_base = os.path.abspath(getattr(self, 'current_output_dir', os.path.join('results')))
+        comparison_path = os.path.join(output_base, 'comparison_report.md')
+        comparison_csv = os.path.join(output_base, 'comparison_data.csv')
+        comparison_json = os.path.join(output_base, 'comparison_data.json')
+        comparison_tex = os.path.join(output_base, 'comparison_table.tex')
+        raw_root = os.path.join(output_base, 'data')
+        log_root = raw_root if os.path.isdir(raw_root) else output_base
+        py2_files = self._find_result_files(log_root, 'benchmark_results_py2')
+        py3_files = self._find_result_files(log_root, 'benchmark_results_py3')
+        os_files = self._find_result_files(log_root, 'benchmark_results_os')
+        if not os_files:
+            os_files = self._find_result_files(log_root, 'opensource')
+
+        self._log("", "INFO")
+        self._log("Results saved to:", "SUCCESS")
+        if py2_files:
+            self._log("  Py2 JSON: {}".format(py2_files[0]), "INFO")
+        if py3_files:
+            self._log("  Py3 JSON: {}".format(py3_files[0]), "INFO")
+        if self.os_var.get() and os_files:
+            self._log("  OS JSON: {}".format(os_files[0]), "INFO")
+        self._log("  Comparison: {}".format(comparison_path), "INFO")
+        self._log("  CSV: {}".format(comparison_csv), "INFO")
+        self._log("  JSON: {}".format(comparison_json), "INFO")
+        self._log("  TEX: {}".format(comparison_tex), "INFO")
+        self._log("=" * 70, "SUCCESS")
 
     def _toggle_language(self):
         current_lang = self.sm.get('language', 'zh')
@@ -1251,6 +1401,8 @@ class ModernBenchmarkGUI(object):
     def _update_language(self):
         self.title_label.config(text=self.sm.get_text('app_title'))
         self.lang_btn.config(text=self.sm.get_text('btn_language'))
+        if hasattr(self, 'open_temp_btn'):
+            self.open_temp_btn.config(text=self.sm.get_text('btn_open_temp'))
 
         # Update button texts
         self.run_btn.config(text=self.sm.get_text('btn_run'))
@@ -1266,8 +1418,10 @@ class ModernBenchmarkGUI(object):
 
         # Check if remember last settings
         if self.sm.get('ui_settings.remember_last_settings', True):
-            # Save current settings
-            self.sm.set('test_settings.data_scale', self.scale_var.get().split()[0])
+            # Save current settings - get scale key from display name
+            scale_display = self.scale_var.get()
+            scale_key = self.scale_name_to_key.get(scale_display, 'tiny')
+            self.sm.set('test_settings.data_scale', scale_key)
             self.sm.set('test_settings.enable_multiprocess', self.mp_var.get())
             self.sm.set('test_settings.enable_opensource', self.os_var.get())
             self.sm.save_config()

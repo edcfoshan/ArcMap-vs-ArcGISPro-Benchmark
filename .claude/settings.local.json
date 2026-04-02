@@ -22,5 +22,6 @@
     "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
     "ANTHROPIC_AUTH_TOKEN": "sk-kimi-QMw4ll6qqZUtzeIHmqxbx1iiST98g4B3grwdIbdGcPf0SpzqVxESgGSshlcI5dpZ"
   },
+  "alwaysThinkingEnabled": false,
   "defaultMode": "bypassPermissions"
 }

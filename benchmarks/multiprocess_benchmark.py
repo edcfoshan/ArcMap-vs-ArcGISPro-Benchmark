@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from benchmarks.base_benchmark import BaseBenchmark
 from config import settings
+from utils.timer import ProgressHeartbeat
 
 
 def worker_create_fishnet(args):
@@ -209,7 +210,8 @@ class MultiprocessBenchmark(BaseBenchmark):
         
         # Setup
         print("  执行 setup()...")
-        self.setup()
+        with ProgressHeartbeat("{} setup()".format(self.name)):
+            self.setup()
         print("  [OK] setup() 完成")
         
         try:
@@ -231,7 +233,9 @@ class MultiprocessBenchmark(BaseBenchmark):
                 start_time = time.time()
                 
                 try:
-                    result = self.run_multiprocess(self.num_workers)
+                    heartbeat_label = "{} - 正式 {}/{} (多进程)".format(self.name, i + 1, num_runs)
+                    with ProgressHeartbeat(heartbeat_label):
+                        result = self.run_multiprocess(self.num_workers)
                     result['success'] = True
                 except Exception as e:
                     import traceback
@@ -254,7 +258,8 @@ class MultiprocessBenchmark(BaseBenchmark):
         finally:
             # Teardown
             print("  执行 teardown()...")
-            self.teardown()
+            with ProgressHeartbeat("{} teardown()".format(self.name)):
+                self.teardown()
             print("  [OK] teardown() 完成")
         
         # Calculate statistics

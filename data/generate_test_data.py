@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import arcpy
 from config import settings
+from utils.timer import ProgressHeartbeat
 
 
 class TestDataGenerator(object):
@@ -22,8 +23,15 @@ class TestDataGenerator(object):
     
     def __init__(self):
         self.data_dir = settings.DATA_DIR
-        self.gdb_name = settings.DEFAULT_GDB_NAME
-        self.gdb_path = os.path.join(self.data_dir, self.gdb_name)
+        if hasattr(settings, 'get_default_gdb_name'):
+            self.gdb_name = settings.get_default_gdb_name()
+        else:
+            self.gdb_name = os.path.basename(settings.DEFAULT_GDB_NAME)
+
+        if hasattr(settings, 'get_default_gdb_path'):
+            self.gdb_path = settings.get_default_gdb_path()
+        else:
+            self.gdb_path = os.path.join(self.data_dir, self.gdb_name)
         self.spatial_ref = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
         self.vector_config = settings.VECTOR_CONFIG
         self.raster_config = settings.RASTER_CONFIG
@@ -77,7 +85,7 @@ class TestDataGenerator(object):
             ("test_polygons_a", "polygon", int(self.vector_config['intersect_features_a'] ** 0.5) ** 2),
             ("test_polygons_b", "polygon", int(self.vector_config['intersect_features_b'] ** 0.5) ** 2),
             ("spatial_join_points", "point", self.vector_config['spatial_join_points']),
-            ("spatial_join_polygons", "polygon", self.vector_config['fishnet_rows'] * self.vector_config['fishnet_cols']),
+            ("spatial_join_polygons", "polygon", int(self.vector_config.get('spatial_join_polygons', 0) ** 0.5) ** 2),
             ("calculate_field_fc", "polygon", self.vector_config['calculate_field_records']),
         ]
         
@@ -103,10 +111,11 @@ class TestDataGenerator(object):
                 print("    [错误] {}: {}".format(dataset_name, str(e)[:50]))
                 all_valid = False
         
-        # Check raster
+        # Check raster (now saved as file instead of in GDB)
         try:
-            if arcpy.Exists("constant_raster"):
-                desc = arcpy.Describe("constant_raster")
+            raster_path = os.path.join(self.data_dir, "constant_raster.tif")
+            if arcpy.Exists(raster_path):
+                desc = arcpy.Describe(raster_path)
                 expected_size = self.raster_config['constant_raster_size']
                 if desc.width == expected_size and desc.height == expected_size:
                     print("    [OK] constant_raster: {}x{} (符合要求)".format(desc.width, desc.height))
@@ -365,15 +374,23 @@ class TestDataGenerator(object):
         grid_rows = int(num_polygons ** 0.5)
         grid_cols = int(num_polygons ** 0.5)
         
+        # 使用有效的地理坐标范围，避免 WGS84 下出现非简单几何
+        origin_x = -180.0
+        origin_y = -90.0
+        total_width = 360.0
+        total_height = 180.0
+        cell_width = total_width / grid_cols
+        cell_height = total_height / grid_rows
+
         arcpy.CreateFishnet_management(
             out_feature_class="spatial_join_polygons",
-            origin_coord="0 0",
-            y_axis_coord="0 1",
-            cell_width=10,
-            cell_height=10,
+            origin_coord="{} {}".format(origin_x, origin_y),
+            y_axis_coord="{} {}".format(origin_x, origin_y + 1.0),
+            cell_width=cell_width,
+            cell_height=cell_height,
             number_rows=grid_rows,
             number_columns=grid_cols,
-            corner_coord="{} {}".format(grid_cols * 10, grid_rows * 10),
+            corner_coord="{} {}".format(origin_x + total_width, origin_y + total_height),
             labels="NO_LABELS",
             geometry_type="POLYGON"
         )
@@ -499,13 +516,14 @@ class TestDataGenerator(object):
         size = self.raster_config['constant_raster_size']
         print("  参数: {}x{} 像素".format(size, size))
         print("  预计大小: ~{} MB".format(int(size * size * 4 / 1024 / 1024)))
-        raster_path = os.path.join(self.gdb_path, "constant_raster")
-        
+        # Save raster as file instead of in GDB (GDB has issues with rasters)
+        raster_path = os.path.join(self.data_dir, "constant_raster.tif")
+
         # Pure arcpy method: Use Raster Calculator to create a constant raster
         # Create a simple calculation that results in all 1's
         extent = "0 0 {} {}".format(size, size)
         cell_size = 1
-        
+
         try:
             # Method 1: Try arcpy.sa.CreateConstantRaster (Pro style)
             print("  尝试使用 arcpy.sa.CreateConstantRaster 创建...")
@@ -513,7 +531,7 @@ class TestDataGenerator(object):
             print("  正在保存栅格...")
             out_raster.save(raster_path)
             print("  [OK] 完成: {}x{} 栅格 (使用 arcpy.sa)".format(size, size))
-            return "constant_raster"
+            return raster_path
         except Exception as e1:
             print("  方法1失败: {}".format(str(e1)[:50]))
             try:
@@ -521,7 +539,7 @@ class TestDataGenerator(object):
                 print("  尝试使用 CreateConstantRaster_sa 创建...")
                 arcpy.CreateConstantRaster_sa(raster_path, 1, "INTEGER", cell_size, extent)
                 print("  [OK] 完成: {}x{} 栅格 (使用 CreateConstantRaster_sa)".format(size, size))
-                return "constant_raster"
+                return raster_path
             except Exception as e:
                 print("  [ERROR] {}".format(str(e)[:100]))
                 return None
@@ -538,26 +556,28 @@ class TestDataGenerator(object):
         
         # Check if we can reuse existing data
         if not force:
-            if self.check_existing_data():
-                return True
+            with ProgressHeartbeat("检查现有数据"):
+                if self.check_existing_data():
+                    return True
         
         # Need to generate data
         print("\n开始生成数据...")
         
         try:
-            # Setup (will delete existing if present)
-            self.setup_workspace()
-            
-            # Generate vector data
-            self.create_fishnet()
-            self.create_random_points()
-            self.create_buffer_data()
-            self.create_intersect_data()
-            self.create_spatial_join_data()
-            self.create_calculate_field_data()
-            
-            # Generate raster data
-            self.create_raster_data()
+            step_actions = [
+                ("步骤 1/8 准备工作空间", self.setup_workspace),
+                ("步骤 2/8 创建渔网多边形 (V1)", self.create_fishnet),
+                ("步骤 3/8 生成随机点 (V2)", self.create_random_points),
+                ("步骤 4/8 创建缓冲区测试数据 (V3)", self.create_buffer_data),
+                ("步骤 5/8 创建叠加分析测试数据 (V4)", self.create_intersect_data),
+                ("步骤 6/8 创建空间连接测试数据 (V5)", self.create_spatial_join_data),
+                ("步骤 7/8 创建字段计算测试数据 (V6)", self.create_calculate_field_data),
+                ("步骤 8/8 创建栅格测试数据 (R1)", self.create_raster_data),
+            ]
+
+            for label, step_func in step_actions:
+                with ProgressHeartbeat(label):
+                    step_func()
             
             print("\n" + "=" * 60)
             print("[OK] 测试数据生成成功！")

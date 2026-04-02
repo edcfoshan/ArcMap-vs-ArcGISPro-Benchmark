@@ -112,8 +112,8 @@ class R2_Resample(BaseBenchmark):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
-        self.input_raster = os.path.join(gdb_path, "constant_raster")
+        # Use file-based raster instead of GDB raster (GDB has issues with rasters)
+        self.input_raster = os.path.join(settings.DATA_DIR, "constant_raster.tif")
         self.output_raster = os.path.join(settings.DATA_DIR, "R2_resample_output.tif")
         
         # Input raster should already exist from data generation
@@ -128,7 +128,12 @@ class R2_Resample(BaseBenchmark):
                 sr = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
                 arcpy.DefineProjection_management(self.input_raster, sr)
             except Exception as e:
-                print("    Error creating raster: {}".format(e))
+                # Python 2/3 compatible error printing
+                try:
+                    error_msg = str(e)
+                except UnicodeEncodeError:
+                    error_msg = unicode(e).encode('utf-8', errors='replace')
+                print("    Error creating raster: {}".format(error_msg))
     
     def teardown(self):
         if self.output_raster and arcpy.Exists(self.output_raster):
@@ -176,8 +181,8 @@ class R3_Clip(BaseBenchmark):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
-        self.input_raster = os.path.join(gdb_path, "constant_raster")
+        # Use file-based raster instead of GDB raster
+        self.input_raster = os.path.join(settings.DATA_DIR, "constant_raster.tif")
         self.output_raster = os.path.join(settings.DATA_DIR, "R3_clip_output.tif")
         
         # Calculate clip extent (center 50%)
@@ -232,8 +237,8 @@ class R4_RasterCalculator(BaseBenchmark):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
-        self.input_raster = os.path.join(gdb_path, "constant_raster")
+        # Use file-based raster instead of GDB raster
+        self.input_raster = os.path.join(settings.DATA_DIR, "constant_raster.tif")
         self.output_raster = os.path.join(settings.DATA_DIR, "R4_calc_output.tif")
     
     def teardown(self):
@@ -247,24 +252,46 @@ class R4_RasterCalculator(BaseBenchmark):
         # Delete if exists
         if arcpy.Exists(self.output_raster):
             arcpy.Delete_management(self.output_raster)
-        
+
         # Try multiple approaches for compatibility with both ArcGIS Desktop and Pro
+        last_error = None
+
         try:
             # Method 1: ArcGIS Pro style using arcpy.sa.Raster
             from arcpy.sa import Raster, Int, Times
             in_ras = Raster(self.input_raster)
             out_ras = Int(Times(in_ras, 2))
             out_ras.save(self.output_raster)
-        except:
+        except Exception as e1:
+            last_error = e1
             try:
-                # Method 2: ArcGIS Desktop style using arcpy.gp.RasterCalculator_sa
-                arcpy.gp.RasterCalculator_sa('Int("{}" * 2)'.format(self.input_raster), self.output_raster)
-            except:
-                # Method 3: Alternative using raster algebra
-                arcpy.env.workspace = os.path.dirname(self.output_raster)
-                out_name = os.path.basename(self.output_raster)
-                arcpy.SingleOutputMapAlgebra_sa('Int("{}" * 2)'.format(self.input_raster), out_name)
-        
+                # Method 2: Use arcpy.sa Times and Int directly
+                import arcpy.sa as sa
+                in_ras = sa.Raster(self.input_raster)
+                out_ras = sa.Int(in_ras * 2)
+                out_ras.save(self.output_raster)
+            except Exception as e2:
+                last_error = e2
+                try:
+                    # Method 3: Alternative using RasterCalculator tool (if available)
+                    arcpy.env.workspace = os.path.dirname(self.output_raster)
+                    out_name = os.path.basename(self.output_raster)
+                    # Check if tool exists before calling
+                    if hasattr(arcpy, 'gp') and hasattr(arcpy.gp, 'RasterCalculator_sa'):
+                        arcpy.gp.RasterCalculator_sa('"{}" * 2'.format(self.input_raster), self.output_raster)
+                    elif hasattr(arcpy, 'management') and hasattr(arcpy.management, 'RasterCalculator'):
+                        arcpy.management.RasterCalculator('"{}" * 2'.format(self.input_raster), self.output_raster)
+                    else:
+                        # Fallback: use Con tool to create modified raster
+                        import arcpy.sa as sa
+                        in_ras = sa.Raster(self.input_raster)
+                        out_ras = sa.Con(in_ras >= 0, in_ras * 2, in_ras * 2)
+                        out_ras.save(self.output_raster)
+                except Exception as e3:
+                    last_error = e3
+                    # Re-raise the last error to fail the benchmark
+                    raise last_error
+
         # Get raster info
         desc = arcpy.Describe(self.output_raster)
         return {
@@ -285,4 +312,9 @@ if __name__ == '__main__':
             print("  Success: {}".format(stats.get('success')))
             print("  Mean time: {:.4f}s".format(stats.get('mean_time', 0)))
         except Exception as e:
-            print("  Error: {}".format(str(e)))
+            # Python 2/3 compatible error printing
+            try:
+                error_msg = str(e)
+            except UnicodeEncodeError:
+                error_msg = unicode(e).encode('utf-8', errors='replace')
+            print("  Error: {}".format(error_msg))

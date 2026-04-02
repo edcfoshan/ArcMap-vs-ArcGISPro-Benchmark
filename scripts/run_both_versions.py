@@ -9,12 +9,17 @@ import sys
 import os
 import subprocess
 import time
+from datetime import datetime
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
+sys.path.insert(0, PROJECT_DIR)
+
+from config import settings
 
 # Python interpreters
 PYTHON27 = r"C:\Python27\ArcGIS10.8\python.exe"
 PYTHON3 = r"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe"
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def check_python_installations():
@@ -34,7 +39,13 @@ def check_python_installations():
     return installations
 
 
-def run_benchmark(python_exe, name, generate_data=False):
+def build_shared_output_dir():
+    """Build a shared timestamped root directory for both benchmark runs."""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    return os.path.join(settings.DATA_DIR, timestamp)
+
+
+def run_benchmark(python_exe, name, generate_data=False, output_dir=None):
     """Run benchmarks with specified Python interpreter"""
     print("\n" + "=" * 70)
     print("Running benchmarks with {}".format(name))
@@ -48,7 +59,10 @@ def run_benchmark(python_exe, name, generate_data=False):
     
     if generate_data:
         cmd.append("--generate-data")
-    
+
+    if output_dir:
+        cmd.extend(["--output-dir", output_dir])
+
     start_time = time.time()
     
     try:
@@ -69,7 +83,7 @@ def run_benchmark(python_exe, name, generate_data=False):
         return False
 
 
-def run_analysis():
+def run_analysis(results_dir=None, output_dir=None):
     """Run result analysis"""
     print("\n" + "=" * 70)
     print("Running result analysis")
@@ -80,6 +94,12 @@ def run_analysis():
         sys.executable,
         os.path.join(SCRIPT_DIR, "analyze_results.py")
     ]
+
+    if results_dir:
+        cmd.extend(["--results-dir", results_dir])
+
+    if output_dir:
+        cmd.extend(["--output-dir", output_dir])
     
     try:
         result = subprocess.call(cmd)
@@ -108,15 +128,23 @@ def main():
     print("\nFound {} Python installation(s):".format(len(installations)))
     for name, path in installations:
         print("  - {}: {}".format(name, path))
-    
+
+    shared_output_dir = build_shared_output_dir()
+    print("\nShared output directory: {}".format(shared_output_dir))
+
     # Run benchmarks on both versions
     results = {}
-    
+
     for name, python_exe in installations:
-        # Generate data only on first run
-        generate_data = (name == installations[0][0])
-        
-        success = run_benchmark(python_exe, name, generate_data=generate_data)
+        # Generate a dedicated data folder for each Python version.
+        generate_data = True
+
+        success = run_benchmark(
+            python_exe,
+            name,
+            generate_data=generate_data,
+            output_dir=shared_output_dir
+        )
         results[name] = success
     
     # Print summary
@@ -131,11 +159,11 @@ def main():
     # Run analysis if both succeeded
     if all(results.values()):
         print("\nRunning analysis...")
-        if run_analysis():
+        if run_analysis(results_dir=shared_output_dir, output_dir=shared_output_dir):
             print("\n" + "=" * 70)
             print("All tasks completed successfully!")
             print("=" * 70)
-            print("\nResults are available in: results/tables/")
+            print("\nResults are available in: {}".format(shared_output_dir))
             return 0
         else:
             print("\nAnalysis failed!")

@@ -170,6 +170,91 @@ class MemoryMonitor(object):
         }
 
 
+class ProgressHeartbeat(object):
+    """Background heartbeat logger for long-running tasks."""
+
+    def __init__(self, label, interval=None, stream=None, enabled=True):
+        self.label = label
+        self.interval = self._coerce_interval(self._resolve_interval(interval))
+        self.stream = stream if stream is not None else sys.stdout
+        self.enabled = enabled
+        self._perf_counter = time.perf_counter if hasattr(time, 'perf_counter') else time.time
+        self._start_time = None
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def _coerce_interval(self, value):
+        try:
+            return float(value)
+        except Exception:
+            return 0
+
+    def _resolve_interval(self, interval):
+        if interval is not None:
+            return interval
+
+        try:
+            from config import settings
+            return getattr(settings, 'PROGRESS_HEARTBEAT_INTERVAL', 0)
+        except Exception:
+            return 0
+
+    def _write(self, message):
+        try:
+            self.stream.write(message + "\n")
+            self.stream.flush()
+        except Exception:
+            pass
+
+    def _run(self):
+        while True:
+            try:
+                if self._stop_event.wait(self.interval):
+                    break
+                elapsed = self.get_elapsed()
+                self._write("  [进度] {} 仍在运行... 已用时 {:.1f}s".format(self.label, elapsed))
+            except Exception:
+                # Keep the heartbeat resilient even if stdout briefly fails.
+                pass
+
+    def start(self):
+        """Start emitting heartbeat messages."""
+        if not self.enabled or self.interval is None or self.interval <= 0:
+            return self
+
+        self._start_time = self._perf_counter()
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run)
+        self._thread.daemon = True
+        self._thread.start()
+        return self
+
+    def stop(self):
+        """Stop heartbeat messages."""
+        if self._thread is None:
+            return self
+
+        self._stop_event.set()
+        try:
+            self._thread.join(timeout=1.0)
+        except Exception:
+            pass
+        self._thread = None
+        return self
+
+    def get_elapsed(self):
+        """Get elapsed time since start."""
+        if self._start_time is None:
+            return 0
+        return self._perf_counter() - self._start_time
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+
+
 class BenchmarkTimer(object):
     """
     Combined timer and memory monitor for benchmarks

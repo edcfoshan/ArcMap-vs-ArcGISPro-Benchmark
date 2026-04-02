@@ -15,6 +15,7 @@ import csv
 import argparse
 import platform
 import subprocess
+import glob
 from datetime import datetime
 
 # Python 2/3 compatibility for file open
@@ -29,6 +30,69 @@ def open_text_file(filepath, mode):
 
 # Alias for CSV compatibility
 open_csv_file = open_text_file
+
+
+def _is_timestamp_name(name):
+    """Return True if a folder name looks like YYYYMMDD_HHMMSS."""
+    return (
+        len(name) == 15 and
+        name[8] == '_' and
+        name[:8].isdigit() and
+        name[9:].isdigit()
+    )
+
+
+def _has_benchmark_results(results_dir):
+    """Check whether a directory contains benchmark result JSON files."""
+    return any(True for _ in _iter_result_files(results_dir))
+
+
+def _iter_result_files(root_dir):
+    """Yield benchmark result JSON files recursively from a root directory."""
+    if not root_dir or not os.path.isdir(root_dir):
+        return
+
+    for dirpath, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            lowered = filename.lower()
+            if lowered.endswith('.json') and 'benchmark_results' in lowered:
+                yield os.path.join(dirpath, filename)
+
+
+def _find_result_root(result_file_dir):
+    """Find the timestamp root for a result file directory."""
+    current = os.path.abspath(result_file_dir)
+
+    while True:
+        if _is_timestamp_name(os.path.basename(current)):
+            return current
+
+        parent = os.path.dirname(current)
+        if parent == current:
+            return result_file_dir
+        current = parent
+
+
+def _find_latest_results_dir():
+    """Find the most recent benchmark result directory."""
+    for base_dir in [getattr(settings, 'DATA_DIR', None), getattr(settings, 'RAW_RESULTS_DIR', None)]:
+        if not base_dir or not os.path.isdir(base_dir):
+            continue
+
+        candidates = {}
+        for result_file in _iter_result_files(base_dir):
+            result_root = _find_result_root(os.path.dirname(result_file))
+            try:
+                mtime = os.path.getmtime(result_file)
+            except OSError:
+                continue
+            if result_root not in candidates or mtime > candidates[result_root]:
+                candidates[result_root] = mtime
+
+        if candidates:
+            return sorted(candidates.items(), key=lambda item: item[1])[-1][0]
+
+    return None
 
 # Add project directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -68,9 +132,22 @@ Examples:
     
     # Python 2/3 compatibility for argparse
     if len(sys.argv) == 1:
-        return parser.parse_args([])
+        args = parser.parse_args([])
+    else:
+        args = parser.parse_args()
+
+    # If the caller did not specify a results directory, prefer the newest
+    # benchmark run so the default command follows the latest output.
+    if '--results-dir' not in sys.argv:
+        latest_results_dir = _find_latest_results_dir()
+        if latest_results_dir:
+            args.results_dir = latest_results_dir
+
+    # Default report output to the same directory as the raw results.
+    if '--output-dir' not in sys.argv:
+        args.output_dir = args.results_dir
     
-    return parser.parse_args()
+    return args
 
 
 def load_results(results_dir):
@@ -78,74 +155,74 @@ def load_results(results_dir):
     results_py2 = None
     results_py3 = None
     results_os = None
-    
-    # Look for result files
-    for filename in os.listdir(results_dir):
-        if filename.endswith('.json') and 'benchmark_results' in filename:
-            filepath = os.path.join(results_dir, filename)
-            
-            with open(filepath, 'r') as f:
-                data = json.load(f)
-            
-            results = data.get('results', [])
-            
-            # Determine Python version from filename or content
-            if 'py2' in filename.lower():
-                if results_py2 is None:
-                    results_py2 = []
-                results_py2.extend(results)
-                print("Loaded Python 2.7 results from: {}".format(filename))
-            elif 'py3' in filename.lower():
-                # Check if it's a dedicated open-source results file
-                if 'os_' in filename.lower() or 'opensource' in filename.lower():
-                    if results_os is None:
-                        results_os = []
-                    results_os.extend(results)
-                    print("Loaded Open-Source results from: {}".format(filename))
-                else:
-                    # Split results into arcpy and open-source (if any _OS tests exist)
-                    # OS tests have '_OS' suffix like 'V1_CreateFishnet_OS'
-                    py3_results = [r for r in results if not r.get('test_name', '').endswith('_OS')]
-                    os_results = [r for r in results if r.get('test_name', '').endswith('_OS')]
-                    
-                    if py3_results:
+
+    candidate_files = sorted(list(_iter_result_files(results_dir)))
+
+    for filepath in candidate_files:
+        filename = os.path.basename(filepath)
+
+        with open_text_file(filepath, 'r') as f:
+            data = json.load(f)
+
+        results = data.get('results', [])
+        lower_name = filename.lower()
+
+        # Determine Python version from filename or content
+        if 'py2' in lower_name:
+            if results_py2 is None:
+                results_py2 = []
+            results_py2.extend(results)
+            print("Loaded Python 2.7 results from: {}".format(filename))
+        elif 'py3' in lower_name and 'benchmark_results_os' not in lower_name and 'opensource' not in lower_name:
+            # Check if it's a dedicated open-source results file
+            # Split results into arcpy and open-source (if any _OS tests exist)
+            # OS tests have '_OS' suffix like 'V1_CreateFishnet_OS'
+            py3_results = [r for r in results if not r.get('test_name', '').endswith('_OS')]
+            os_results = [r for r in results if r.get('test_name', '').endswith('_OS')]
+
+            if py3_results:
+                if results_py3 is None:
+                    results_py3 = []
+                results_py3.extend(py3_results)
+                print("Loaded Python 3.x results from: {} ({} tests)".format(filename, len(py3_results)))
+            if os_results:
+                if results_os is None:
+                    results_os = []
+                results_os.extend(os_results)
+                print("Loaded Open-Source results from: {} ({} tests)".format(filename, len(os_results)))
+        elif 'benchmark_results_os' in lower_name or 'opensource' in lower_name or lower_name.endswith('_os.json'):
+            if results_os is None:
+                results_os = []
+            results_os.extend(results)
+            print("Loaded Open-Source results from: {}".format(filename))
+        else:
+            # Try to detect from content
+            if results and 'python_version' in results[0]:
+                py_ver = results[0]['python_version']
+                if py_ver.startswith('2.'):
+                    if results_py2 is None:
+                        results_py2 = []
+                    results_py2.extend(results)
+                    print("Loaded Python 2.7 results from: {}".format(filename))
+                elif any(r.get('test_name', '').endswith('_OS') for r in results):
+                    # Split results (OS tests have _OS suffix)
+                    new_py3_results = [r for r in results if not r.get('test_name', '').endswith('_OS')]
+                    new_os_results = [r for r in results if r.get('test_name', '').endswith('_OS')]
+                    if new_py3_results:
                         if results_py3 is None:
                             results_py3 = []
-                        results_py3.extend(py3_results)
-                        print("Loaded Python 3.x results from: {} ({} tests)".format(filename, len(py3_results)))
-                    if os_results:
+                        results_py3.extend(new_py3_results)
+                        print("Loaded Python 3.x results from: {}".format(filename))
+                    if new_os_results:
                         if results_os is None:
                             results_os = []
-                        results_os.extend(os_results)
-                        print("Loaded Open-Source results from: {} ({} tests)".format(filename, len(os_results)))
-            else:
-                # Try to detect from content
-                if results and 'python_version' in results[0]:
-                    py_ver = results[0]['python_version']
-                    if py_ver.startswith('2.'):
-                        if results_py2 is None:
-                            results_py2 = []
-                        results_py2.extend(results)
-                        print("Loaded Python 2.7 results from: {}".format(filename))
-                    elif any(r.get('test_name', '').endswith('_OS') for r in results):
-                        # Split results (OS tests have _OS suffix)
-                        new_py3_results = [r for r in results if not r.get('test_name', '').endswith('_OS')]
-                        new_os_results = [r for r in results if r.get('test_name', '').endswith('_OS')]
-                        if new_py3_results:
-                            if results_py3 is None:
-                                results_py3 = []
-                            results_py3.extend(new_py3_results)
-                            print("Loaded Python 3.x results from: {}".format(filename))
-                        if new_os_results:
-                            if results_os is None:
-                                results_os = []
-                            results_os.extend(new_os_results)
-                            print("Loaded Open-Source results from: {}".format(filename))
-                    else:
-                        if results_py3 is None:
-                            results_py3 = []
-                        results_py3.extend(results)
-                        print("Loaded Python 3.x results from: {}".format(filename))
+                        results_os.extend(new_os_results)
+                        print("Loaded Open-Source results from: {}".format(filename))
+                else:
+                    if results_py3 is None:
+                        results_py3 = []
+                    results_py3.extend(results)
+                    print("Loaded Python 3.x results from: {}".format(filename))
     
     return results_py2, results_py3, results_os
 
@@ -195,7 +272,9 @@ def create_comparison(results_py2, results_py3, results_os=None):
             speedup = 0
         
         # 判断哪个版本更快 (Py2 vs Py3)
-        if speedup > 1.05:
+        if py2_time <= 0 or py3_time <= 0:
+            faster = "数据不完整"
+        elif speedup > 1.05:
             faster = "Python 3.x 更快"
         elif speedup < 0.95:
             faster = "Python 2.7 更快"
@@ -797,127 +876,130 @@ def generate_markdown_table(comparison, stats, results_py2=None, results_py3=Non
     
     # ==================== 4. 多线程性能报告 ====================
     if has_mp_results:
+        def _format_relative_cell(time_value, baseline_value, baseline=False):
+            if time_value <= 0:
+                return "N/A"
+            if baseline:
+                return "{:.4f}s<br>1.00x (基准)".format(time_value)
+            if baseline_value <= 0:
+                return "{:.4f}s<br>N/A".format(time_value)
+            return "{:.4f}s<br>{:.2f}x".format(time_value, baseline_value / time_value)
+
+        def _collect_speedups(key):
+            values = []
+            for data in mp_data.values():
+                baseline = data.get('py2_single', 0)
+                time_value = data.get(key, 0)
+                if baseline > 0 and time_value > 0:
+                    values.append(baseline / time_value)
+            return values
+
+        py2_speedups = _collect_speedups('py2_multi')
+        py3_single_speedups = _collect_speedups('py3_single')
+        py3_speedups = _collect_speedups('py3_multi')
+        os_single_speedups = _collect_speedups('os_single') if has_os else []
+        os_speedups = _collect_speedups('os_multi') if has_os else []
+
         lines.append("---")
         lines.append("")
         lines.append("# 四、多线程（多进程）性能报告")
         lines.append("")
-        if has_os:
-            lines.append("> 说明：以下测试对比单进程 vs 多进程（4进程）执行性能。")
-        else:
-            lines.append("> 说明：以下测试对比单进程 vs 多进程（4进程）执行性能。")
-        lines.append("> 多进程加速比 = 单进程时间 / 多进程时间，理想值为4.0x（线性加速）。")
+        lines.append("> 说明：以下结果统一以 Py2.7 单进程作为基线，所有单进程和多进程项目都按这条基线对比。")
+        lines.append("> 相对基线加速比 = Py2.7 单进程时间 / 当前模式时间。")
         lines.append("")
-        
+
         lines.append("## 4.1 多进程性能对比")
         lines.append("")
         if has_os:
-            lines.append("| 测试项目 | Py2.7单进程 | Py2.7多进程 | Py2.7加速 | Py3.x单进程 | Py3.x多进程 | Py3.x加速 | 开源库单进程 | 开源库多进程 | 开源库加速 |")
-            lines.append("|----------|------------|------------|----------|------------|------------|----------|-------------|-------------|-----------|")
+            lines.append("| 测试项目 | Py2.7单进程（基准） | Py2.7多进程 | Py3.x单进程 | Py3.x多进程 | 开源库单进程 | 开源库多进程 |")
+            lines.append("|----------|-------------------|-----------|-----------|-----------|------------|------------|")
         else:
-            lines.append("| 测试项目 | Py2.7单进程 | Py2.7多进程 | Py2.7加速 | Py3.x单进程 | Py3.x多进程 | Py3.x加速 |")
-            lines.append("|----------|------------|------------|----------|------------|------------|----------|")
-        
+            lines.append("| 测试项目 | Py2.7单进程（基准） | Py2.7多进程 | Py3.x单进程 | Py3.x多进程 |")
+            lines.append("|----------|-------------------|-----------|-----------|-----------|")
+
         for base_name in sorted(mp_data.keys()):
             data = mp_data[base_name]
             display_name = base_name.replace('MP_', '')
 
-            # 跳过 Py2.7 没有多进程数据的测试（Py2.7 只有5个MP测试）
-            if data['py2_single'] == 0 and data['py2_multi'] == 0:
+            if data['py2_single'] <= 0:
                 continue
 
-            # Py2.7
-            py2_single_str = "{:.4f}".format(data['py2_single']) if data['py2_single'] > 0 else "N/A"
-            py2_multi_str = "{:.4f}".format(data['py2_multi']) if data['py2_multi'] > 0 else "N/A"
-            py2_speedup = data['py2_single'] / data['py2_multi'] if data['py2_multi'] > 0 else 0
-            py2_speedup_str = "{:.2f}x".format(py2_speedup) if py2_speedup > 0 else "N/A"
-            
-            # Py3.x
-            py3_single_str = "{:.4f}".format(data['py3_single']) if data['py3_single'] > 0 else "N/A"
-            py3_multi_str = "{:.4f}".format(data['py3_multi']) if data['py3_multi'] > 0 else "N/A"
-            py3_speedup = data['py3_single'] / data['py3_multi'] if data['py3_multi'] > 0 else 0
-            py3_speedup_str = "{:.2f}x".format(py3_speedup) if py3_speedup > 0 else "N/A"
-            
+            py2_single_cell = _format_relative_cell(data['py2_single'], data['py2_single'], baseline=True)
+            py2_multi_cell = _format_relative_cell(data['py2_multi'], data['py2_single'])
+            py3_single_cell = _format_relative_cell(data['py3_single'], data['py2_single'])
+            py3_multi_cell = _format_relative_cell(data['py3_multi'], data['py2_single'])
+
             if has_os:
-                # OS data
-                os_single_str = "{:.4f}".format(data['os_single']) if data['os_single'] > 0 else "N/A"
-                os_multi_str = "{:.4f}".format(data['os_multi']) if data['os_multi'] > 0 else "N/A"
-                os_speedup = data['os_single'] / data['os_multi'] if data['os_multi'] > 0 else 0
-                os_speedup_str = "{:.2f}x".format(os_speedup) if os_speedup > 0 else "N/A"
-                lines.append("| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
-                    display_name, py2_single_str, py2_multi_str, py2_speedup_str,
-                    py3_single_str, py3_multi_str, py3_speedup_str, 
-                    os_single_str, os_multi_str, os_speedup_str
-                ))
-            else:
+                os_single_cell = _format_relative_cell(data['os_single'], data['py2_single'])
+                os_multi_cell = _format_relative_cell(data['os_multi'], data['py2_single'])
                 lines.append("| {} | {} | {} | {} | {} | {} | {} |".format(
-                    display_name, py2_single_str, py2_multi_str, py2_speedup_str,
-                    py3_single_str, py3_multi_str, py3_speedup_str
+                    display_name,
+                    py2_single_cell,
+                    py2_multi_cell,
+                    py3_single_cell,
+                    py3_multi_cell,
+                    os_single_cell,
+                    os_multi_cell
                 ))
-        lines.append("")
-        
-        lines.append("## 4.2 多进程效率分析")
-        lines.append("")
-        if has_os:
-            lines.append("| 指标 | Python 2.7 | Python 3.x | 开源库 | 说明 |")
-            lines.append("|------|-----------|-----------|--------|------|")
-        else:
-            lines.append("| 指标 | Python 2.7 | Python 3.x | 说明 |")
-            lines.append("|------|-----------|-----------|------|")
-        
-        # 计算统计值
-        py2_speedups = [d['py2_single']/d['py2_multi'] for d in mp_data.values() if d['py2_single'] > 0 and d['py2_multi'] > 0]
-        py3_speedups = [d['py3_single']/d['py3_multi'] for d in mp_data.values() if d['py3_single'] > 0 and d['py3_multi'] > 0]
-        os_speedups = [d['os_single']/d['os_multi'] for d in mp_data.values() if d['os_single'] > 0 and d['os_multi'] > 0]
-        
-        if py2_speedups:
-            if has_os:
-                os_avg = sum(os_speedups)/len(os_speedups) if os_speedups else 0
-                os_eff = sum(os_speedups)/len(os_speedups)/4*100 if os_speedups else 0
-                os_best = max(os_speedups) if os_speedups else 0
-                os_worst = min(os_speedups) if os_speedups else 0
-                lines.append("| 平均加速比 | {:.2f}x | {:.2f}x | {:.2f}x | 多进程vs单进程 |".format(
-                    sum(py2_speedups)/len(py2_speedups), sum(py3_speedups)/len(py3_speedups) if py3_speedups else 0, os_avg
-                ))
-                lines.append("| 并行效率 | {:.1f}% | {:.1f}% | {:.1f}% | 实际加速/理想加速(4x) |".format(
-                    sum(py2_speedups)/len(py2_speedups)/4*100,
-                    sum(py3_speedups)/len(py3_speedups)/4*100 if py3_speedups else 0,
-                    os_eff
-                ))
-                lines.append("| 最佳加速 | {:.2f}x | {:.2f}x | {:.2f}x | 最佳测试项 |".format(max(py2_speedups), max(py3_speedups) if py3_speedups else 0, os_best))
-                lines.append("| 最差加速 | {:.2f}x | {:.2f}x | {:.2f}x | 最差测试项 |".format(min(py2_speedups), min(py3_speedups) if py3_speedups else 0, os_worst))
             else:
-                lines.append("| 平均加速比 | {:.2f}x | {:.2f}x | 多进程vs单进程 |".format(
-                    sum(py2_speedups)/len(py2_speedups), sum(py3_speedups)/len(py3_speedups) if py3_speedups else 0
+                lines.append("| {} | {} | {} | {} | {} |".format(
+                    display_name,
+                    py2_single_cell,
+                    py2_multi_cell,
+                    py3_single_cell,
+                    py3_multi_cell
                 ))
-                lines.append("| 并行效率 | {:.1f}% | {:.1f}% | 实际加速/理想加速(4x) |".format(
-                    sum(py2_speedups)/len(py2_speedups)/4*100,
-                    sum(py3_speedups)/len(py3_speedups)/4*100 if py3_speedups else 0
-                ))
-                lines.append("| 最佳加速 | {:.2f}x | {:.2f}x | 最佳测试项 |".format(max(py2_speedups), max(py3_speedups) if py3_speedups else 0))
-                lines.append("| 最差加速 | {:.2f}x | {:.2f}x | 最差测试项 |".format(min(py2_speedups), min(py3_speedups) if py3_speedups else 0))
+
         lines.append("")
-        
+
+        lines.append("## 4.2 统一基线效率分析")
+        lines.append("")
+        lines.append("> 说明：下表继续沿用 Py2.7 单进程基线，数值大于 1.0x 表示快于基线。")
+        lines.append("")
+        lines.append("| 指标 | 平均相对基线加速比 | 最佳 | 最差 | 说明 |")
+        lines.append("|------|-------------------|------|------|------|")
+
+        def _append_speedup_row(label, values, note):
+            if values:
+                lines.append("| {} | {:.2f}x | {:.2f}x | {:.2f}x | {} |".format(
+                    label,
+                    sum(values) / len(values),
+                    max(values),
+                    min(values),
+                    note
+                ))
+            else:
+                lines.append("| {} | N/A | N/A | N/A | {} |".format(label, note))
+
+        _append_speedup_row("Py2.7多进程", py2_speedups, "相对 Py2.7 单进程")
+        _append_speedup_row("Py3.x单进程", py3_single_speedups, "相对 Py2.7 单进程")
+        _append_speedup_row("Py3.x多进程", py3_speedups, "相对 Py2.7 单进程")
+        if has_os:
+            _append_speedup_row("开源库单进程", os_single_speedups, "相对 Py2.7 单进程")
+            _append_speedup_row("开源库多进程", os_speedups, "相对 Py2.7 单进程")
+
+        lines.append("")
+
         lines.append("### 多进程性能评价标准")
         lines.append("")
-        lines.append("- **优秀** (≥3.5x): 接近线性加速，并行效率≥87.5%")
-        lines.append("- **良好** (2.5x-3.5x): 较好并行效果，并行效率62.5%-87.5%")
+        lines.append("- **优秀** (>=3.5x): 接近线性加速，并行效率>=87.5%")
+        lines.append("- **良好** (2.5x-3.5x): 较好并行效果，并行效率25.0%-87.5%")
         lines.append("- **一般** (1.5x-2.5x): 有一定加速效果，并行效率37.5%-62.5%")
-        lines.append("- **较差** (<1.5x): 并行开销较大，效率<37.5%")
+        lines.append("- **较差** (<1.5x): 并行开销较大，收益有限")
         lines.append("- **负优化** (<1.0x): 多进程反而更慢，不适合并行")
         lines.append("")
-        
+
         lines.append("> **当前测试结果分析**：")
-        if py2_speedups and py3_speedups:
-            avg_py2 = sum(py2_speedups)/len(py2_speedups)
-            avg_py3 = sum(py3_speedups)/len(py3_speedups)
-            if avg_py2 < 1.0 or avg_py3 < 1.0:
-                lines.append("> TINY规模下，多进程启动开销大于并行收益，导致加速比<1。建议在STANDARD或MEDIUM规模下测试多进程性能。")
-            elif avg_py2 < 1.5 or avg_py3 < 1.5:
-                lines.append("> 当前数据规模下，多进程效率较低。数据量较小时，进程间通信开销占主导。")
+        mp_speedups = py2_speedups + py3_speedups + os_speedups
+        if mp_speedups:
+            avg_mp_speedup = sum(mp_speedups) / len(mp_speedups)
+            if avg_mp_speedup < 1.0:
+                lines.append("> 当前数据规模下，多进程总体慢于 Py2.7 单进程基线，启动和通信开销仍然偏大。")
+            elif avg_mp_speedup < 1.5:
+                lines.append("> 当前数据规模下，多进程相对基线有一定提升，但优势仍然有限。")
             else:
-                lines.append("> 多进程已显示出一定加速效果，可尝试更大规模数据以获得更好效果。")
+                lines.append("> 多进程已经显示出明显的相对基线收益，适合继续在更大数据量下验证。")
         lines.append("")
-    
     # ==================== 5. 深度对比分析 ====================
     lines.append("---")
     lines.append("")
@@ -1152,8 +1234,8 @@ def generate_markdown_table(comparison, stats, results_py2=None, results_py3=Non
     lines.append("## 6.3 性能优化建议")
     lines.append("")
     
-    if has_mp_results and py2_speedups and py3_speedups:
-        avg_mp_speedup = (sum(py2_speedups) + sum(py3_speedups)) / (len(py2_speedups) + len(py3_speedups))
+    if has_mp_results and mp_speedups:
+        avg_mp_speedup = sum(mp_speedups) / len(mp_speedups)
         if avg_mp_speedup < 1:
             lines.append("- **多进程优化**：当前数据规模下多进程效率不高，建议增加数据量或使用更大规模测试多进程性能。")
         elif avg_mp_speedup < 2:
@@ -1309,6 +1391,7 @@ def save_outputs(comparison, stats, output_dir, results_py2=None, results_py3=No
     
     # Markdown
     md_content = generate_markdown_table(comparison, stats, results_py2, results_py3, has_os, results_os)
+    md_content = md_content.replace('#N/A', '-').replace('N/A', '-')
     md_path = os.path.join(output_dir, "comparison_report.md")
     with open_text_file(md_path, 'w') as f:
         f.write(md_content)

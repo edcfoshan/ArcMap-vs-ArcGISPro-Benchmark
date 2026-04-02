@@ -182,7 +182,90 @@ RAW_RESULTS_DIR = os.path.join(RESULTS_DIR, 'raw')
 TABLES_DIR = os.path.join(RESULTS_DIR, 'tables')
 FIGURES_DIR = os.path.join(RESULTS_DIR, 'figures')
 
-# Create directories if they don't exist
+# Timestamped results directory (set dynamically at runtime)
+TIMESTAMPED_RESULTS_DIR = None
+CURRENT_TIMESTAMP = None
+
+def set_timestamped_dirs(timestamp=None, base_data_dir=None):
+    """Set timestamped directories for temp folder organization
+
+    Args:
+        timestamp: Timestamp string (YYYYMMDD_HHMMSS). If None, generates current time.
+        base_data_dir: Base data directory. If None, uses default temp path.
+    """
+    global TIMESTAMPED_RESULTS_DIR, RAW_RESULTS_DIR, TABLES_DIR, FIGURES_DIR, RESULTS_DIR
+    global DATA_DIR, DEFAULT_GDB_NAME, SCRATCH_WORKSPACE
+
+    if timestamp is None:
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    if base_data_dir is None:
+        base_data_dir = r'C:\temp\arcgis_benchmark_data'
+
+    # Store the timestamp for later use
+    global CURRENT_TIMESTAMP
+    CURRENT_TIMESTAMP = timestamp
+
+    # Set data directory to timestamped folder
+    DATA_DIR = os.path.join(base_data_dir, timestamp)
+
+    # Keep reports at the timestamp root and raw artifacts under a dedicated
+    # data folder so the top-level directory stays tidy.
+    TIMESTAMPED_RESULTS_DIR = DATA_DIR
+    RESULTS_DIR = DATA_DIR
+    RAW_RESULTS_DIR = os.path.join(DATA_DIR, 'data')
+    TABLES_DIR = DATA_DIR
+    FIGURES_DIR = DATA_DIR
+
+    # Scratch work stays flat; runtime code can narrow this further if needed.
+    SCRATCH_WORKSPACE = DATA_DIR
+
+    # 保持为文件名，避免 ArcPy 在 CreateFileGDB 时把完整路径当作名称
+    DEFAULT_GDB_NAME = 'benchmark_data_{}.gdb'.format(DATA_SCALE)
+
+    # Create the root folder and the raw-data base folder.
+    for dir_path in [DATA_DIR, RAW_RESULTS_DIR]:
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+
+    return TIMESTAMPED_RESULTS_DIR
+
+def reset_to_default_dirs():
+    """Reset to default project-based results directories"""
+    global TIMESTAMPED_RESULTS_DIR, RAW_RESULTS_DIR, TABLES_DIR, FIGURES_DIR, RESULTS_DIR
+    global DATA_DIR, DEFAULT_GDB_NAME, SCRATCH_WORKSPACE, CURRENT_TIMESTAMP
+
+    RESULTS_DIR = os.path.join(BASE_DIR, 'results')
+    RAW_RESULTS_DIR = os.path.join(RESULTS_DIR, 'raw')
+    TABLES_DIR = os.path.join(RESULTS_DIR, 'tables')
+    FIGURES_DIR = os.path.join(RESULTS_DIR, 'figures')
+    TIMESTAMPED_RESULTS_DIR = None
+    CURRENT_TIMESTAMP = None
+
+    # Reset data directory
+    DATA_DIR = r'C:\temp\arcgis_benchmark_data'
+    SCRATCH_WORKSPACE = os.path.join(DATA_DIR, 'scratch')
+    DEFAULT_GDB_NAME = 'benchmark_data_{}.gdb'.format(DATA_SCALE)
+
+    # Create directories if they don't exist
+    for dir_path in [RESULTS_DIR, RAW_RESULTS_DIR, TABLES_DIR, FIGURES_DIR, DATA_DIR, SCRATCH_WORKSPACE]:
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+
+
+def get_default_gdb_name():
+    """获取默认地理数据库名称（不含目录）"""
+    return os.path.basename(DEFAULT_GDB_NAME)
+
+
+def get_default_gdb_path():
+    """获取默认地理数据库完整路径"""
+    if os.path.isabs(DEFAULT_GDB_NAME):
+        return DEFAULT_GDB_NAME
+    return os.path.join(DATA_DIR, DEFAULT_GDB_NAME)
+
+# Create default directories if they don't exist
 for dir_path in [RESULTS_DIR, RAW_RESULTS_DIR, TABLES_DIR, FIGURES_DIR]:
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
@@ -253,6 +336,10 @@ for category in TEST_CATEGORIES.values():
 
 ENABLE_MEMORY_MONITORING = True
 MEMORY_SAMPLE_INTERVAL = 0.5  # seconds
+
+# Progress heartbeat interval for long-running tasks.
+# Set to 0 or a negative value to disable heartbeat logs.
+PROGRESS_HEARTBEAT_INTERVAL = 2
 
 # ============================================================================
 # Helper Functions

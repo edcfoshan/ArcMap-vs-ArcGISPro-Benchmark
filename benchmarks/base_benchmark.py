@@ -13,7 +13,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import settings
-from utils.timer import BenchmarkTimer
+from utils.timer import BenchmarkTimer, ProgressHeartbeat
 
 
 class BaseBenchmark(object):
@@ -73,7 +73,8 @@ class BaseBenchmark(object):
         
         # Setup
         print("  执行 setup()...")
-        self.setup()
+        with ProgressHeartbeat("{} setup()".format(self.name)):
+            self.setup()
         print("  [OK] setup() 完成")
         
         try:
@@ -82,7 +83,9 @@ class BaseBenchmark(object):
                 print("  预热运行 ({} 次)...".format(warmup_runs))
                 for i in range(warmup_runs):
                     print("    预热 {}/{}...".format(i + 1, warmup_runs))
-                    result = self._run_single_iteration()
+                    result = self._run_single_iteration(
+                        progress_label="预热 {}/{}".format(i + 1, warmup_runs)
+                    )
                     self.warmup_results.append(result)
                     if result.get('success'):
                         print("      耗时: {:.4f}秒".format(result.get('elapsed_seconds', 0)))
@@ -93,7 +96,9 @@ class BaseBenchmark(object):
             print("  正式测试运行 ({} 次)...".format(num_runs))
             for i in range(num_runs):
                 print("    运行 {}/{}...".format(i + 1, num_runs))
-                result = self._run_single_iteration()
+                result = self._run_single_iteration(
+                    progress_label="正式 {}/{}".format(i + 1, num_runs)
+                )
                 self.results.append(result)
                 
                 if result.get('success'):
@@ -108,28 +113,34 @@ class BaseBenchmark(object):
         finally:
             # Teardown
             print("  执行 teardown()...")
-            self.teardown()
+            with ProgressHeartbeat("{} teardown()".format(self.name)):
+                self.teardown()
             print("  [OK] teardown() 完成")
         
         # Calculate statistics
         return self.get_statistics()
     
-    def _run_single_iteration(self):
+    def _run_single_iteration(self, progress_label=None):
         """Run a single iteration with timing"""
+        heartbeat_label = self.name
+        if progress_label:
+            heartbeat_label = "{} - {}".format(self.name, progress_label)
+
         with BenchmarkTimer(name=self.name, monitor_memory=settings.ENABLE_MEMORY_MONITORING) as bt:
-            try:
-                # Run the actual benchmark
-                result = self.run_single()
-                result['success'] = True
-            except Exception as e:
-                import traceback
-                error_detail = traceback.format_exc()
-                result = {
-                    'success': False,
-                    'error': str(e),
-                    'error_type': type(e).__name__,
-                    'traceback': error_detail
-                }
+            with ProgressHeartbeat(heartbeat_label):
+                try:
+                    # Run the actual benchmark
+                    result = self.run_single()
+                    result['success'] = True
+                except Exception as e:
+                    import traceback
+                    error_detail = traceback.format_exc()
+                    result = {
+                        'success': False,
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'traceback': error_detail
+                    }
         
         # Combine timing results with benchmark result
         timing_results = bt.get_results()
@@ -207,10 +218,16 @@ class BaseBenchmark(object):
         
         stats = self.get_statistics()
         
-        filename = "{}_{}.json".format(
-            self.name,
-            "py{}".format(sys.version_info[0])
-        )
+        filename_base = self.name
+        if self.name.endswith('_OS'):
+            filename_base = self.name[:-3]
+            suffix = 'os'
+        elif str(self.category).endswith('_os'):
+            suffix = 'os'
+        else:
+            suffix = "py{}".format(sys.version_info[0])
+
+        filename = "{}_{}.json".format(filename_base, suffix)
         filepath = os.path.join(output_dir, filename)
         
         with open(filepath, 'w') as f:

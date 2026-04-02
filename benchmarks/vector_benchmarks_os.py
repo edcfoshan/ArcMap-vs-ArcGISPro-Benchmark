@@ -20,8 +20,7 @@ try:
     from shapely.ops import unary_union
     import pyogrio
     HAS_OS_LIBS = True
-except ImportError as e:
-    print("Warning: Open-source libraries not available: {}".format(e))
+except ImportError:
     HAS_OS_LIBS = False
 
 from config import settings

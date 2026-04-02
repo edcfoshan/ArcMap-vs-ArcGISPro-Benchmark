@@ -14,7 +14,7 @@ set "PYTHON3=C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.ex
 set "SCRIPT_DIR=%~dp0"
 
 if exist "%PYTHON3%" (
-    "%PYTHON3%" "%SCRIPT_DIR%benchmark_gui.py"
+    "%PYTHON3%" "%SCRIPT_DIR%benchmark_gui_modern.py"
 ) else (
-    python "%SCRIPT_DIR%benchmark_gui.py"
+    python "%SCRIPT_DIR%benchmark_gui_modern.py"
 )

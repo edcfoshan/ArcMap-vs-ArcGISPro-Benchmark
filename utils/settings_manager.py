@@ -7,6 +7,7 @@ from __future__ import print_function, division, absolute_import
 import os
 import json
 import sys
+import copy
 from datetime import datetime
 
 # Configuration file path
@@ -40,6 +41,7 @@ DEFAULT_CONFIG = {
         'window_height': 800,
         'show_advanced': False,
         'remember_last_settings': True,  # 保留上次设置
+        'font_scale': 1.0,  # 字体缩放比例（默认正常字体）
     },
     'data_scale_custom': {
         'tiny': {
@@ -102,13 +104,6 @@ DEFAULT_CONFIG = {
         'data_dir': r'C:\temp\arcgis_benchmark_data',
         'custom_output_dir': '',  # empty = use default
     },
-    'ui_settings': {
-        'window_width': 1200,
-        'window_height': 800,
-        'show_advanced': False,
-        'remember_last_settings': True,
-        'font_scale': 1.0,  # 字体缩放比例（默认正常字体）
-    }
 }
 
 # Translations
@@ -155,7 +150,7 @@ TRANSLATIONS = {
         'btn_run': '开始测试',
         'btn_run_all': '五级连跑',
         'btn_stop': '停止测试',
-        'btn_open_temp': '打开临时文件夹',
+        'btn_open_temp': '打开生成结果文件夹',
         'btn_save_settings': '保存设置',
         'btn_reset': '恢复默认',
 
@@ -257,7 +252,7 @@ TRANSLATIONS = {
         'btn_run': 'Run Tests',
         'btn_run_all': 'Run All Scales',
         'btn_stop': 'Stop',
-        'btn_open_temp': 'Open Temp Folder',
+        'btn_open_temp': 'Open Generated Results Folder',
         'btn_save_settings': 'Save Settings',
         'btn_reset': 'Reset Default',
 
@@ -344,12 +339,12 @@ class SettingsManager(object):
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     saved_config = json.load(f)
                     # Merge with defaults to ensure all keys exist
-                    config = DEFAULT_CONFIG.copy()
+                    config = copy.deepcopy(DEFAULT_CONFIG)
                     self._deep_update(config, saved_config)
                     return config
             except Exception as e:
                 print("Error loading config: {}".format(e))
-        return DEFAULT_CONFIG.copy()
+        return copy.deepcopy(DEFAULT_CONFIG)
 
     def _deep_update(self, d, u):
         """递归更新字典"""
@@ -447,7 +442,7 @@ class SettingsManager(object):
 
     def reset_to_defaults(self):
         """重置为默认配置"""
-        self.config = DEFAULT_CONFIG.copy()
+        self.config = copy.deepcopy(DEFAULT_CONFIG)
         self.save_config()
 
     def auto_detect_python_paths(self):

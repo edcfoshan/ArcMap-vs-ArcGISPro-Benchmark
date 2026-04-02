@@ -20,12 +20,12 @@ try:
     from shapely.geometry import box
     import numpy as np
     HAS_OS_LIBS = True
-except ImportError as e:
-    print("Warning: Open-source libraries not available: {}".format(e))
+except ImportError:
     HAS_OS_LIBS = False
 
 from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
+from utils.timer import ProgressHeartbeat
 
 
 def create_fishnet_chunk(args):
@@ -65,7 +65,7 @@ class MultiprocessBenchmarkOS(BaseBenchmark):
     
     def __init__(self, name, category="general"):
         super(MultiprocessBenchmarkOS, self).__init__(name, category)
-        self.num_workers = getattr(settings, 'MULTIPROCESS_WORKERS', 4)
+        self.num_workers = settings.get_multiprocess_workers() if hasattr(settings, 'get_multiprocess_workers') else 4
     
     def run(self, num_runs=None, warmup_runs=None, use_multiprocess=False):
         """Run benchmark with optional multiprocessing"""
@@ -85,7 +85,8 @@ class MultiprocessBenchmarkOS(BaseBenchmark):
         
         # Setup
         print("  执行 setup()...")
-        self.setup()
+        with ProgressHeartbeat("{} setup()".format(self.name)):
+            self.setup()
         print("  [OK] setup() 完成")
         
         try:
@@ -93,14 +94,21 @@ class MultiprocessBenchmarkOS(BaseBenchmark):
             if warmup_runs > 0:
                 print("  预热运行 (%d 次)..." % warmup_runs)
                 for i in range(warmup_runs):
-                    result = self._run_single_iteration(use_multiprocess=False)
+                    result = self._run_single_iteration(
+                        use_multiprocess=False,
+                        progress_label="预热 %d/%d" % (i + 1, warmup_runs)
+                    )
                     self.warmup_results.append(result)
             
             # Actual benchmark runs
             print("  正式测试运行 (%d 次)..." % num_runs)
             for i in range(num_runs):
                 print("    运行 %d/%d..." % (i + 1, num_runs))
-                result = self._run_single_iteration(use_multiprocess=use_multiprocess)
+                mode_label = "多进程" if use_multiprocess else "单进程"
+                result = self._run_single_iteration(
+                    use_multiprocess=use_multiprocess,
+                    progress_label="正式 %d/%d (%s)" % (i + 1, num_runs, mode_label)
+                )
                 self.results.append(result)
                 
                 if result.get('success'):
@@ -113,7 +121,8 @@ class MultiprocessBenchmarkOS(BaseBenchmark):
         finally:
             # Teardown
             print("  执行 teardown()...")
-            self.teardown()
+            with ProgressHeartbeat("{} teardown()".format(self.name)):
+                self.teardown()
             print("  [OK] teardown() 完成")
         
         # Add num_workers to statistics
@@ -121,27 +130,32 @@ class MultiprocessBenchmarkOS(BaseBenchmark):
         stats['num_workers'] = self.num_workers if use_multiprocess else 1
         return stats
     
-    def _run_single_iteration(self, use_multiprocess=False):
+    def _run_single_iteration(self, use_multiprocess=False, progress_label=None):
         """Run a single iteration"""
         from utils.timer import BenchmarkTimer
-        
+
+        heartbeat_label = self.name
+        if progress_label:
+            heartbeat_label = "%s - %s" % (self.name, progress_label)
+
         with BenchmarkTimer(name=self.name, monitor_memory=settings.ENABLE_MEMORY_MONITORING) as bt:
-            try:
-                if use_multiprocess:
-                    result = self.run_multiprocess(self.num_workers)
-                    result['mode'] = 'multiprocess'
-                else:
-                    result = self.run_single()
-                    result['mode'] = 'single'
-                result['success'] = True
-            except Exception as e:
-                import traceback
-                result = {
-                    'success': False,
-                    'error': str(e),
-                    'traceback': traceback.format_exc(),
-                    'mode': 'multiprocess' if use_multiprocess else 'single'
-                }
+            with ProgressHeartbeat(heartbeat_label):
+                try:
+                    if use_multiprocess:
+                        result = self.run_multiprocess(self.num_workers)
+                        result['mode'] = 'multiprocess'
+                    else:
+                        result = self.run_single()
+                        result['mode'] = 'single'
+                    result['success'] = True
+                except Exception as e:
+                    import traceback
+                    result = {
+                        'success': False,
+                        'error': str(e),
+                        'traceback': traceback.format_exc(),
+                        'mode': 'multiprocess' if use_multiprocess else 'single'
+                    }
         
         timing_results = bt.get_results()
         result.update(timing_results)

@@ -53,6 +53,84 @@ def check_arcpy():
         return False
 
 
+def _is_timestamp_name(name):
+    """Check whether a folder name looks like YYYYMMDD_HHMMSS."""
+    return (
+        len(name) == 15 and
+        name[8] == '_' and
+        name[:8].isdigit() and
+        name[9:].isdigit()
+    )
+
+
+def _extract_timestamp_root(output_dir):
+    """Extract timestamp root and its base temp directory from an output path."""
+    normalized_output_dir = os.path.normpath(output_dir)
+    base_name = os.path.basename(normalized_output_dir)
+
+    if _is_timestamp_name(base_name):
+        timestamp_dir = normalized_output_dir
+        return timestamp_dir, os.path.dirname(timestamp_dir)
+
+    parent_dir = os.path.dirname(normalized_output_dir)
+    grandparent_dir = os.path.dirname(parent_dir)
+
+    if base_name.lower() in ['raw', 'tables', 'results'] and _is_timestamp_name(os.path.basename(parent_dir)):
+        timestamp_dir = parent_dir
+        return timestamp_dir, os.path.dirname(timestamp_dir)
+
+    if base_name.lower() == 'raw' and os.path.basename(parent_dir).lower() == 'results' and _is_timestamp_name(os.path.basename(grandparent_dir)):
+        timestamp_dir = grandparent_dir
+        return timestamp_dir, os.path.dirname(timestamp_dir)
+
+    if base_name.lower() == 'tables' and os.path.basename(parent_dir).lower() == 'results' and _is_timestamp_name(os.path.basename(grandparent_dir)):
+        timestamp_dir = grandparent_dir
+        return timestamp_dir, os.path.dirname(timestamp_dir)
+
+    return None, None
+
+
+def _is_opensource_benchmark(benchmark):
+    """Return True when the benchmark belongs to the open-source set."""
+    name = getattr(benchmark, 'name', '')
+    category = getattr(benchmark, 'category', '')
+    return name.endswith('_OS') or category.endswith('_os')
+
+
+def _build_group_output_dir(output_root, group_name):
+    """Build a version-specific output directory under the session root."""
+    return os.path.join(output_root, 'data', group_name)
+
+
+def _activate_group_output_dir(output_root, group_name):
+    """Switch benchmark globals to the group-specific working directory."""
+    group_dir = _build_group_output_dir(output_root, group_name)
+    if not os.path.exists(group_dir):
+        os.makedirs(group_dir)
+
+    settings.DATA_DIR = group_dir
+    settings.RAW_RESULTS_DIR = group_dir
+    settings.SCRATCH_WORKSPACE = os.path.join(group_dir, 'scratch')
+    if not os.path.exists(settings.SCRATCH_WORKSPACE):
+        os.makedirs(settings.SCRATCH_WORKSPACE)
+
+    return group_dir
+
+
+def _split_benchmark_groups(benchmarks):
+    """Split benchmarks into ArcPy and open-source groups."""
+    arcpy_benchmarks = []
+    opensource_benchmarks = []
+
+    for benchmark in benchmarks:
+        if _is_opensource_benchmark(benchmark):
+            opensource_benchmarks.append(benchmark)
+        else:
+            arcpy_benchmarks.append(benchmark)
+
+    return arcpy_benchmarks, opensource_benchmarks
+
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -143,8 +221,12 @@ def generate_test_data():
     print("\n" + "=" * 60)
     print("Generating Test Data")
     print("=" * 60)
-    
+
     try:
+        # Add script directory to path to ensure data module can be imported
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
         from data.generate_test_data import TestDataGenerator
         generator = TestDataGenerator()
         datasets = generator.generate_all()
@@ -152,6 +234,8 @@ def generate_test_data():
         return True
     except Exception as e:
         print("\nError generating test data: {}".format(str(e)))
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -237,32 +321,38 @@ def run_benchmarks(benchmarks, num_runs, warmup_runs):
     return results
 
 
-def save_results(results, output_dir):
+def save_results(results, output_dir, result_tag=None):
     """Save results to files"""
     exporter = ResultExporter(output_dir)
     
-    # Determine Python version for filename
-    py_version = "py{}".format(sys.version_info[0])
+    # Determine file tag for the current result group
+    if not result_tag:
+        result_tag = "py{}".format(sys.version_info[0])
+    result_tag = result_tag.lower()
+    if result_tag == 'os':
+        title = "Open-Source Benchmark Results"
+    else:
+        title = "Benchmark Results ({})".format(result_tag)
     
     # Export to JSON
     json_file = exporter.export_json(
         results,
-        "benchmark_results_{}.json".format(py_version)
+        "benchmark_results_{}.json".format(result_tag)
     )
     print("\nJSON results saved to: {}".format(json_file))
     
     # Export to Markdown
     md_file = exporter.export_markdown(
         results,
-        "benchmark_results_{}.md".format(py_version),
-        title="Benchmark Results ({})".format(py_version)
+        "benchmark_results_{}.md".format(result_tag),
+        title=title
     )
     print("Markdown report saved to: {}".format(md_file))
     
     # Export to CSV
     csv_file = exporter.export_csv(
         results,
-        "benchmark_results_{}.csv".format(py_version)
+        "benchmark_results_{}.csv".format(result_tag)
     )
     print("CSV results saved to: {}".format(csv_file))
     
@@ -306,10 +396,8 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers, include_open
             try:
                 # Create fresh instance for single process test
                 fresh_benchmark = benchmark.__class__()
-                fresh_benchmark.setup()
                 stats_single = fresh_benchmark.run(num_runs=num_runs, warmup_runs=warmup_runs,
                                              use_multiprocess=False)
-                fresh_benchmark.teardown()
 
                 stats_single['test_name'] = "{}_{}_single".format(py_version, benchmark.name)
 
@@ -334,10 +422,8 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers, include_open
             try:
                 # Create fresh instance for multiprocess test
                 fresh_benchmark = benchmark.__class__()
-                fresh_benchmark.setup()
                 stats_mp = fresh_benchmark.run(num_runs=num_runs, warmup_runs=warmup_runs,
                                          use_multiprocess=True)
-                fresh_benchmark.teardown()
 
                 stats_mp['test_name'] = "{}_{}_multiprocess".format(py_version, benchmark.name)
 
@@ -402,10 +488,8 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers, include_open
             stats_single = None
             try:
                 fresh_benchmark = benchmark.__class__()
-                fresh_benchmark.setup()
                 stats_single = fresh_benchmark.run(num_runs=num_runs, warmup_runs=warmup_runs, 
                                              use_multiprocess=False)
-                fresh_benchmark.teardown()
 
                 os_name = benchmark.name.replace('_OS', '')
                 stats_single['test_name'] = "OS_{}_single".format(os_name)
@@ -429,10 +513,8 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers, include_open
             print("\n  [2/2] Multiprocess version ({} workers)...".format(num_workers))
             try:
                 fresh_benchmark = benchmark.__class__()
-                fresh_benchmark.setup()
                 stats_mp = fresh_benchmark.run(num_runs=num_runs, warmup_runs=warmup_runs,
                                          use_multiprocess=True)
-                fresh_benchmark.teardown()
 
                 os_name = benchmark.name.replace('_OS', '')
                 stats_mp['test_name'] = "OS_{}_multiprocess".format(os_name)
@@ -466,6 +548,185 @@ def run_multiprocess_benchmarks(num_runs, warmup_runs, num_workers, include_open
             
             mp_results.append(stats_mp)
     
+    return mp_results
+
+
+def run_multiprocess_benchmarks_group(num_runs, warmup_runs, num_workers, group_mode='arcpy'):
+    """Run multiprocess benchmarks for a single result group."""
+    mp_results = []
+
+    if group_mode not in ['arcpy', 'opensource']:
+        return mp_results
+
+    print("\n" + "=" * 70)
+    if group_mode == 'arcpy':
+        print("Running ArcPy Multiprocess Benchmarks")
+    else:
+        print("Running Open-Source Multiprocess Benchmarks")
+    print("Workers: {}".format(num_workers))
+    print("=" * 70)
+
+    if group_mode == 'arcpy':
+        if not HAS_ARCPY_BENCHMARKS:
+            print("\n[信息] 跳过 ArcGIS 多进程基准测试(arcpy 不可用)")
+            return mp_results
+
+        from benchmarks.multiprocess_tests import get_multiprocess_benchmarks
+        py_version = "Py{}".format(sys.version_info[0])
+        mp_benchmarks = get_multiprocess_benchmarks()
+
+        for i, benchmark in enumerate(mp_benchmarks, 1):
+            print("\n" + "-" * 70)
+            print("[{}/{}] Running multiprocess comparison: {}".format(
+                i, len(mp_benchmarks), benchmark.name
+            ))
+            print("-" * 70)
+
+            print("\n  [1/2] Single process version...")
+            stats_single = None
+            try:
+                fresh_benchmark = benchmark.__class__()
+                stats_single = fresh_benchmark.run(
+                    num_runs=num_runs,
+                    warmup_runs=warmup_runs,
+                    use_multiprocess=False
+                )
+                stats_single['test_name'] = "{}_{}_single".format(py_version, benchmark.name)
+                if stats_single.get('success'):
+                    print("    [OK] Single process: {:.4f}s".format(stats_single.get('mean_time', 0)))
+                else:
+                    print("    [FAILED] Single process: {}".format(stats_single.get('error', 'Unknown')))
+            except Exception as e:
+                print("    [ERROR] Single process: {}".format(str(e)))
+                import traceback
+                print(traceback.format_exc())
+                stats_single = {
+                    'test_name': "{}_{}_single".format(py_version, benchmark.name),
+                    'success': False,
+                    'error': str(e)
+                }
+
+            mp_results.append(stats_single)
+
+            print("\n  [2/2] Multiprocess version ({} workers)...".format(num_workers))
+            try:
+                fresh_benchmark = benchmark.__class__()
+                stats_mp = fresh_benchmark.run(
+                    num_runs=num_runs,
+                    warmup_runs=warmup_runs,
+                    use_multiprocess=True
+                )
+                stats_mp['test_name'] = "{}_{}_multiprocess".format(py_version, benchmark.name)
+
+                if stats_mp.get('success'):
+                    print("    [OK] Multiprocess: {:.4f}s".format(stats_mp.get('mean_time', 0)))
+                    if stats_single.get('success'):
+                        speedup = stats_single['mean_time'] / stats_mp['mean_time'] if stats_mp['mean_time'] > 0 else 0
+                        efficiency = speedup / num_workers * 100 if num_workers > 0 else 0
+                        print("    Speedup: {:.2f}x (Efficiency: {:.1f}%)".format(speedup, efficiency))
+                else:
+                    print("    [FAILED] Multiprocess: {}".format(stats_mp.get('error', 'Unknown')))
+            except Exception as e:
+                print("    [ERROR] Multiprocess: {}".format(str(e)))
+                import traceback
+                print(traceback.format_exc())
+                stats_mp = {
+                    'test_name': "{}_{}_multiprocess".format(py_version, benchmark.name),
+                    'success': False,
+                    'error': str(e)
+                }
+
+            stats_mp['execution_mode'] = 'multiprocess'
+            stats_mp['num_workers'] = num_workers
+            if stats_single.get('success') and stats_mp.get('success'):
+                stats_mp['speedup_vs_single'] = stats_single['mean_time'] / stats_mp['mean_time'] if stats_mp['mean_time'] > 0 else 0
+                stats_mp['parallel_efficiency'] = stats_mp['speedup_vs_single'] / num_workers * 100
+
+            mp_results.append(stats_mp)
+
+        return mp_results
+
+    if sys.version_info[0] < 3:
+        print("\n[信息] 跳过开源库多进程测试，Python 3.x 环境不可用")
+        return mp_results
+
+    try:
+        from benchmarks.multiprocess_tests_os import MultiprocessTestsOS
+    except ImportError:
+        print("[Warning] Open-source multiprocess tests not available")
+        return mp_results
+
+    os_mp_benchmarks = MultiprocessTestsOS.get_all_benchmarks()
+    for i, benchmark in enumerate(os_mp_benchmarks, 1):
+        print("\n" + "-" * 70)
+        print("[OS {}/{}] Running multiprocess comparison: {}".format(
+            i, len(os_mp_benchmarks), benchmark.name
+        ))
+        print("-" * 70)
+
+        print("\n  [1/2] Single process version...")
+        stats_single = None
+        try:
+            fresh_benchmark = benchmark.__class__()
+            stats_single = fresh_benchmark.run(
+                num_runs=num_runs,
+                warmup_runs=warmup_runs,
+                use_multiprocess=False
+            )
+            os_name = benchmark.name.replace('_OS', '')
+            stats_single['test_name'] = "OS_{}_single".format(os_name)
+            if stats_single.get('success'):
+                print("    [OK] Single process: {:.4f}s".format(stats_single.get('mean_time', 0)))
+            else:
+                print("    [FAILED] Single process: {}".format(stats_single.get('error', 'Unknown')))
+        except Exception as e:
+            print("    [ERROR] Single process: {}".format(str(e)))
+            os_name = benchmark.name.replace('_OS', '')
+            stats_single = {
+                'test_name': "OS_{}_single".format(os_name),
+                'success': False,
+                'error': str(e)
+            }
+
+        mp_results.append(stats_single)
+
+        print("\n  [2/2] Multiprocess version ({} workers)...".format(num_workers))
+        try:
+            fresh_benchmark = benchmark.__class__()
+            stats_mp = fresh_benchmark.run(
+                num_runs=num_runs,
+                warmup_runs=warmup_runs,
+                use_multiprocess=True
+            )
+
+            os_name = benchmark.name.replace('_OS', '')
+            stats_mp['test_name'] = "OS_{}_multiprocess".format(os_name)
+
+            if stats_mp.get('success'):
+                print("    [OK] Multiprocess: {:.4f}s".format(stats_mp.get('mean_time', 0)))
+                if stats_single.get('success'):
+                    speedup = stats_single['mean_time'] / stats_mp['mean_time'] if stats_mp['mean_time'] > 0 else 0
+                    efficiency = speedup / num_workers * 100 if num_workers > 0 else 0
+                    print("    Speedup: {:.2f}x (Efficiency: {:.1f}%)".format(speedup, efficiency))
+            else:
+                print("    [FAILED] Multiprocess: {}".format(stats_mp.get('error', 'Unknown')))
+        except Exception as e:
+            print("    [ERROR] Multiprocess: {}".format(str(e)))
+            os_name = benchmark.name.replace('_OS', '')
+            stats_mp = {
+                'test_name': "OS_{}_multiprocess".format(os_name),
+                'success': False,
+                'error': str(e)
+            }
+
+        stats_mp['execution_mode'] = 'multiprocess'
+        stats_mp['num_workers'] = num_workers
+        if stats_single.get('success') and stats_mp.get('success'):
+            stats_mp['speedup_vs_single'] = stats_single['mean_time'] / stats_mp['mean_time'] if stats_mp['mean_time'] > 0 else 0
+            stats_mp['parallel_efficiency'] = stats_mp['speedup_vs_single'] / num_workers * 100
+
+        mp_results.append(stats_mp)
+
     return mp_results
 
 
@@ -535,17 +796,123 @@ def main():
     
     # Print configuration
     settings.print_config()
-    
+
     # Apply scale setting if specified
     if args.scale:
         settings.set_scale(args.scale)
         print("\n[信息] 数据规模已设置为: {}".format(args.scale.upper()))
-    
-    # Generate test data if requested
+
+    # Propagate multiprocess worker count to benchmark classes.
+    # The benchmark constructors read from settings at instantiation time.
+    if args.mp_workers < 1:
+        print("\nERROR: --mp-workers must be at least 1")
+        return 1
+    settings.MULTIPROCESS_CONFIG['num_workers'] = args.mp_workers
+    settings.MULTIPROCESS_WORKERS = args.mp_workers
+
+    # ===== 关键修复: 先设置时间戳目录，再生成数据 =====
+    # Set output directory - keep runtime outputs in a flat timestamp root
+    if args.output_dir:
+        output_dir = os.path.abspath(args.output_dir)
+        # Accept either <base>/<timestamp> or legacy nested result folders.
+        try:
+            timestamp_dir, base_data_dir = _extract_timestamp_root(output_dir)
+            if timestamp_dir:
+                timestamp = os.path.basename(timestamp_dir)
+                settings.set_timestamped_dirs(timestamp, base_data_dir=base_data_dir)
+                output_dir = settings.DATA_DIR
+                print("\n[Info] Using timestamped root directory: {}".format(settings.DATA_DIR))
+        except Exception:
+            pass  # If extraction fails, just use the provided output_dir
+    else:
+        # Use timestamped directory in temp folder
+        settings.set_timestamped_dirs()
+        output_dir = settings.DATA_DIR
+        print("\n[Info] Results will be saved to: {}".format(settings.DATA_DIR))
+
+    # Determine whether open-source benchmarks should be included.
+    include_opensource = False
+    if args.opensource:
+        if sys.version_info[0] < 3:
+            print("\n[注意] 开源库基准测试需要 Python 3.x，当前为 Python 2.x，已跳过")
+        elif not HAS_OS_BENCHMARKS:
+            print("\n[注意] 未找到开源库模块 (geopandas, rasterio 等)，已跳过")
+        else:
+            include_opensource = True
+            print("\n[信息] 将包含开源库 (GeoPandas/Rasterio) 基准测试")
+
+    # Group benchmarks so each version gets its own folder.
+    benchmarks = get_benchmarks(args.category, include_opensource)
+    arcpy_benchmarks, opensource_benchmarks = _split_benchmark_groups(benchmarks)
+
+    if not arcpy_benchmarks and not opensource_benchmarks:
+        print("\nNo benchmarks to run for category: {}".format(args.category))
+        return 1
+
+    # Get run parameters
+    num_runs = args.runs if args.runs is not None else settings.TEST_RUNS
+    warmup_runs = args.warmup if args.warmup is not None else settings.WARMUP_RUNS
+
+    def run_group(group_name, group_benchmarks, mp_mode=None):
+        """Run one benchmark family in its own folder."""
+        if not group_benchmarks:
+            return []
+
+        group_output_dir = _activate_group_output_dir(output_dir, group_name)
+        print("\n[Info] Group output directory: {}".format(group_output_dir))
+
+        if args.generate_data:
+            if not generate_test_data():
+                raise RuntimeError("Failed to generate test data for group: {}".format(group_name))
+
+        group_results = run_benchmarks(group_benchmarks, num_runs, warmup_runs)
+
+        if args.multiprocess and mp_mode:
+            group_results.extend(run_multiprocess_benchmarks_group(
+                num_runs,
+                warmup_runs,
+                args.mp_workers,
+                group_mode=mp_mode
+            ))
+
+        print("\nSaving results for group: {}".format(group_name))
+        save_results(group_results, group_output_dir, result_tag=group_name)
+        return group_results
+
+    all_results = []
+    try:
+        if arcpy_benchmarks:
+            arcpy_group_name = "py{}".format(sys.version_info[0])
+            all_results.extend(run_group(arcpy_group_name, arcpy_benchmarks, mp_mode='arcpy'))
+
+        if opensource_benchmarks:
+            all_results.extend(run_group('os', opensource_benchmarks, mp_mode='opensource'))
+    except RuntimeError as e:
+        print("\nERROR: {}".format(str(e)))
+        return 1
+
+    print_summary(all_results)
+
+    print("\n" + "=" * 70)
+    print("Benchmark Complete")
+    print("=" * 70)
+
+    if args.multiprocess:
+        print("\nMultiprocess comparison completed!")
+        print("Check the results for single vs multiprocess speedup data.")
+    else:
+        print("\nNext steps:")
+        print("1. Run this script with the other Python version")
+        print("2. Run analyze_results.py to generate comparison tables")
+
+    return 0
+
+    # Generate test data if requested (现在会使用正确的时间戳目录)
     if args.generate_data:
         if not generate_test_data():
-            print("\nWarning: Failed to generate test data. Continuing anyway...")
-    
+            print("\nERROR: Failed to generate test data. Aborting benchmark run to avoid partial results.")
+            return 1
+
     # Get benchmarks
     # Check if opensource flag is valid (Python 3.x only)
     include_opensource = False
@@ -557,17 +924,16 @@ def main():
         else:
             include_opensource = True
             print("\n[信息] 将包含开源库 (GeoPandas/Rasterio) 基准测试")
-    
+
     benchmarks = get_benchmarks(args.category, include_opensource)
-    
+
     if not benchmarks:
         print("\nNo benchmarks to run for category: {}".format(args.category))
         return 1
-    
+
     # Get run parameters
     num_runs = args.runs if args.runs is not None else settings.TEST_RUNS
     warmup_runs = args.warmup if args.warmup is not None else settings.WARMUP_RUNS
-    output_dir = args.output_dir if args.output_dir else settings.RAW_RESULTS_DIR
     
     # Run benchmarks
     results = run_benchmarks(benchmarks, num_runs, warmup_runs)
