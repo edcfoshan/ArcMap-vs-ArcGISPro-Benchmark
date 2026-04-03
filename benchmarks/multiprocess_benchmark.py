@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from benchmarks.base_benchmark import BaseBenchmark
 from config import settings
 from utils.timer import ProgressHeartbeat
+from utils.raster_utils import create_constant_raster
 
 
 def worker_create_fishnet(args):
@@ -132,21 +133,7 @@ def worker_create_raster(args):
     
     try:
         arcpy.env.overwriteOutput = True
-        
-        try:
-            # ArcGIS Pro style
-            from arcpy.sa import CreateConstantRaster
-            out_raster = CreateConstantRaster(1, "INTEGER", cell_size, extent)
-            out_raster.save(output_raster)
-        except:
-            # ArcGIS Desktop style
-            arcpy.CreateConstantRaster_sa(
-                output_raster,
-                1,
-                "INTEGER",
-                cell_size,
-                extent
-            )
+        create_constant_raster(output_raster, cell_size, extent, value=1, use_spatial_analyst=False)
         
         return {'success': True, 'worker_id': worker_id, 'output': output_raster}
     except Exception as e:

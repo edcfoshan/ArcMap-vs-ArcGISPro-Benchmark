@@ -1,283 +1,257 @@
 # ArcGIS Python2、3 与开源库性能对比测试工具
 
+> 当前文档适用版本：`v1.0.0`
+
 ## 项目简介
 
-本工具用于对比分析 ArcGIS Desktop (Python 2.7)、ArcGIS Pro (Python 3.x) 以及开源库方案在相同硬件环境下处理 GIS 数据的性能差异。
+本项目用于在同一台 Windows 机器上，对 ArcGIS Desktop (Python 2.7)、ArcGIS Pro (Python 3.x) 以及开源 GIS 库方案进行统一基准测试，输出可直接用于论文写作、统计分析和结果归档的报告文件。
 
-**新增功能**：支持开源库（GeoPandas/Rasterio）三向性能对比，评估使用开源方案替代 ArcGIS/arcpy 的可行性。
+`v1.0.0` 是首个面向正式发布整理的版本，已经统一启动入口、GUI 操作路径、结果目录结构与中文文档说明。
 
-## 文件组织结构
+## v1.0 核心能力
 
-```
-📁 根目录（用户操作区）
-├── 📄 README.md              ← 本文件，项目说明
-├── 📄 QUICKSTART.md          ← 快速上手指南（先看这个）
-├── 📄 requirements.txt       ← Python依赖包清单
-├── 🖥️ benchmark_gui_modern.py ← 【主要】图形界面工具
-├── ⚡ run_benchmarks.py      ← 【主要】命令行测试脚本
-├── 📊 analyze_results.py     ← 【主要】生成对比报告（支持三向对比）
-├── 🚀 launch_gui.bat         ← 快速启动GUI（带窗口）
-├── 🚀 start_gui_hidden.vbs   ← 快速启动GUI（无窗口）
-├── 🧹 cleanup_temp.bat       ← 清理临时数据
-│
-📁 benchmarks/                ← 基准测试代码
-│   ├── vector_benchmarks.py      ← arcpy 矢量测试
-│   ├── vector_benchmarks_os.py   ← 开源库矢量测试 (GeoPandas)
-│   ├── raster_benchmarks.py      ← arcpy 栅格测试
-│   ├── raster_benchmarks_os.py   ← 开源库栅格测试 (Rasterio)
-│   ├── mixed_benchmarks.py       ← arcpy 混合测试
-│   ├── mixed_benchmarks_os.py    ← 开源库混合测试
-│   └── base_benchmark.py         ← 基础测试类
-│
-📁 config/                    ← 配置文件
-│   └── settings.py           ← 测试参数配置（五级数据规模）
-📁 data/                      ← 测试数据生成代码
-📁 C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\  ← 运行时生成的测试结果目录
-│   ├── data\py2             ← Python 2.7 原始数据与结果
-│   ├── data\py3             ← Python 3.x 原始数据与结果
-│   ├── data\os              ← 开源库原始数据与结果
-│   └── comparison_report.md  ← 最终对比报告（根目录输出）
-📁 utils/                     ← 工具函数库
-└── desktop_automation/       ← 桌面自动化测试代码
-```
+- 12 项 GIS 基准测试，覆盖矢量、栅格、混合操作。
+- 支持 Python 2.7、Python 3.x 与开源库方案的两向或三向对比。
+- 提供现代化 GUI，支持多规模勾选、进度条、ETA、日志保存/复制、结果目录直开。
+- 支持五级数据规模：`tiny`、`small`、`standard`、`medium`、`large`。
+- 支持多进程对比与开源库可用性检测/安装。
+- 报告统一输出为 `Markdown / LaTeX / CSV / JSON` 四种格式。
 
-## 快速开始
+## 文档导航
 
-### 1. 启动工具
+- `QUICKSTART.md`：最短路径上手说明。
+- `GUI_v2_使用说明.md`：当前 GUI 的完整使用说明。
+- `docs/GUI_GUIDE.md`：图形界面详细操作指南。
+- `docs/README_SIMPLE.md`：面向直接使用者的简化版说明。
+- `RELEASE_NOTES.md`：`v1.0.0` 发布说明与发布前复核建议。
+- `docs/DESKTOP_TEST_GUIDE.md`：桌面软件窗口 vs 独立解释器扩展研究指南。
+- `制作EXE说明.md`：GUI 打包为 EXE 的说明。
 
-**推荐方式** - 双击启动（无黑窗口）：
-```
-启动工具.vbs
-```
+## 推荐启动方式
 
-或命令行方式：
-```bash
-python benchmark_gui_modern.py
-```
+| 方式 | 入口 | 说明 |
+|------|------|------|
+| 推荐 | `启动工具.vbs` | 无黑窗口启动，优先使用 ArcGIS Pro Python 环境 |
+| 兼容 | `launch_gui.bat` | 批处理方式隐藏启动 |
+| 兼容 | `python launch_gui.py` | 由启动器自动选择合适解释器 |
+| 兼容 | `launch.vbs` / `start_gui_hidden.vbs` | 历史兼容入口，仍可使用 |
+| 备用 | `启动工具_系统Python.vbs` | 使用系统 `pythonw`，仅在环境完整时建议使用 |
 
-### 2. 运行测试
+## GUI 快速流程
 
-- 在 GUI 中选择数据规模（超小/小型/标准/中型/大型）
-- 勾选「多进程对比」（可选）
-- 勾选「开源库对比」（可选，Python 3.x 环境）
-- 点击「开始全自动测试」按钮
-- 等待测试完成
+1. 双击 `启动工具.vbs`。
+2. 首次启动时确认 Python 2.7 与 Python 3.x 路径正确。
+3. 勾选一个或多个数据规模，可选启用“多进程”与“开源库”。
+4. 点击“开始测试”。
+5. 测试完成后点击“打开生成结果文件夹”查看报告。
 
-### 3. 查看报告
+如果一次勾选多个规模，程序会在同一时间戳目录下为每个规模分别生成一套结果，互不覆盖。
 
-测试完成后，报告会自动保存到 `C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\comparison_report.md`，包含：
-- **两向对比**：Python 2.7 vs Python 3.x
-- **三向对比**：Python 2.7 vs Python 3.x vs 开源库
+## 命令行用法
 
-## 测试内容
-
-### 矢量数据测试 (6项 × 2方案)
-
-| 测试项 | arcpy 实现 | 开源实现 | 说明 |
-|--------|-----------|----------|------|
-| V1_CreateFishnet | ✅ | ✅ (GeoPandas) | 创建渔网多边形 |
-| V2_CreateRandomPoints | ✅ | ✅ (GeoPandas) | 生成随机点 |
-| V3_Buffer | ✅ | ✅ (GeoPandas) | 缓冲区分析 |
-| V4_Intersect | ✅ | ✅ (GeoPandas) | 叠加分析 |
-| V5_SpatialJoin | ✅ | ✅ (GeoPandas) | 空间连接 |
-| V6_CalculateField | ✅ | ✅ (GeoPandas) | 字段计算 |
-
-### 栅格数据测试 (4项 × 2方案)
-
-| 测试项 | arcpy 实现 | 开源实现 | 说明 |
-|--------|-----------|----------|------|
-| R1_CreateConstantRaster | ✅ | ✅ (Rasterio) | 创建常量栅格 |
-| R2_Resample | ✅ | ✅ (Rasterio) | 栅格重采样 |
-| R3_Clip | ✅ | ✅ (Rasterio) | 栅格裁剪 |
-| R4_RasterCalculator | ✅ | ✅ (Rasterio) | 栅格计算 |
-
-### 混合测试 (2项 × 2方案)
-
-| 测试项 | arcpy 实现 | 开源实现 | 说明 |
-|--------|-----------|----------|------|
-| M1_PolygonToRaster | ✅ | ✅ | 矢转栅 |
-| M2_RasterToPoint | ✅ | ✅ | 栅转矢 |
-
-## 数据规模
-
-| 规模 | 数据量 | 预计时间 | 适用场景 |
-|------|--------|----------|----------|
-| 超小 (tiny) | 标准1/100 | 1-2分钟 | 快速验证/调试 |
-| 小型 (small) | 标准1/10 | 5-10分钟 | 功能测试 |
-| 标准 (standard) | 中等规模 | 15-30分钟 | 日常测试 |
-| 中型 (medium) | 标准规模 | 30-60分钟 | 性能对比（推荐）|
-| 大型 (large) | 超大规格 | 2-4小时 | 学术研究 |
-
-### 各级别详细参数
-
-| 规模 | 渔网多边形 | 随机点 | 叠加分析 | 栅格尺寸 |
-|------|-----------|--------|----------|----------|
-| 超小 | 2,500 (50×50) | 1,000 | 10,000×10,000 | 500×500 |
-| 小型 | 10,000 (100×100) | 10,000 | 100,000×100,000 | 1,000×1,000 |
-| 标准 | 250,000 (500×500) | 50,000 | 300,000×300,000 | 5,000×5,000 |
-| 中型 | 1,000,000 (1000×1000) | 100,000 | 1,000,000×1,000,000 | 10,000×10,000 |
-| 大型 | 25,000,000 (5000×5000) | 500,000 | 5,000,000×5,000,000 | 30,000×30,000 |
-
-## 命令行使用
-
-### 基本用法
+### 1. 环境验证
 
 ```bash
-# 运行所有测试（默认配置）
-python run_benchmarks.py
-
-# 指定数据规模
-python run_benchmarks.py --scale medium
-
-# 包含开源库对比（Python 3.x 环境）
-python run_benchmarks.py --scale medium --opensource
-
-# 启用多进程对比
-python run_benchmarks.py --scale medium --multiprocess --mp-workers 4
-
-# 完整参数示例
-python run_benchmarks.py --scale medium --runs 3 --warmup 1 --opensource --multiprocess --mp-workers 4
+C:\Python27\ArcGIS10.8\python.exe test_setup.py
+"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" test_setup.py
 ```
 
-### 参数说明
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--scale` | 数据规模：tiny/small/standard/medium/large | 从 settings.py 读取 |
-| `--runs` | 每项测试运行次数 | 3 |
-| `--warmup` | 预热运行次数 | 0 |
-| `--category` | 测试类别：vector/raster/mixed/all | all |
-| `--opensource` | 启用开源库对比 | False |
-| `--multiprocess` | 启用多进程对比 | False |
-| `--mp-workers` | 多进程工作进程数 | 4 |
-| `--generate-data` | 强制重新生成测试数据 | False |
-
-### 分析结果
+### 2. 单独运行某个版本
 
 ```bash
-# 生成对比报告
-python analyze_results.py
+C:\Python27\ArcGIS10.8\python.exe run_benchmarks.py --scale medium
+"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" run_benchmarks.py --scale medium
+```
 
-# 指定结果目录
+### 3. 启用开源库对比
+
+```bash
+"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" run_benchmarks.py --scale medium --opensource
+```
+
+### 4. 自动跑双版本
+
+```bash
+python scripts\run_both_versions.py
+```
+
+### 5. 单独分析结果
+
+```bash
 python analyze_results.py --results-dir C:\temp\arcgis_benchmark_data\<时间戳>\<规模> --output-dir C:\temp\arcgis_benchmark_data\<时间戳>\<规模>
 ```
 
-## 输出报告
+## 测试内容
 
-测试完成后自动生成以下报告：
+### 矢量测试（6 项）
 
-- **comparison_report.md** - Markdown格式报告（可直接阅读）
-  - 两向对比表格（Py2.7 vs Py3.x）
-  - 三向对比表格（Py2.7 vs Py3.x vs 开源库）
-  - 统计摘要和性能分析
-- **comparison_table.tex** - LaTeX表格（可直接插入论文）
-- **comparison_data.csv** - Excel数据（可进一步分析）
-- **comparison_data.json** - JSON原始数据
+| ID | 名称 | 说明 |
+|----|------|------|
+| V1 | CreateFishnet | 创建渔网多边形 |
+| V2 | CreateRandomPoints | 生成随机点 |
+| V3 | Buffer | 缓冲区分析 |
+| V4 | Intersect | 叠加分析 |
+| V5 | SpatialJoin | 空间连接 |
+| V6 | CalculateField | 字段计算 |
+
+### 栅格测试（4 项）
+
+| ID | 名称 | 说明 |
+|----|------|------|
+| R1 | CreateConstantRaster | 创建常量栅格 |
+| R2 | Resample | 栅格重采样 |
+| R3 | Clip | 栅格裁剪 |
+| R4 | RasterCalculator | 栅格计算 |
+
+### 混合测试（2 项）
+
+| ID | 名称 | 说明 |
+|----|------|------|
+| M1 | PolygonToRaster | 矢转栅 |
+| M2 | RasterToPoint | 栅转矢 |
+
+## 数据规模
+
+| 规模 | 预计时间 | 典型用途 | 典型磁盘需求 |
+|------|----------|----------|--------------|
+| `tiny` | 1-2 分钟 | 快速验证、调试 | 约 500MB |
+| `small` | 5-10 分钟 | 功能测试 | 约 2GB |
+| `standard` | 15-30 分钟 | 日常验证 | 约 5GB |
+| `medium` | 30-60 分钟 | 性能对比、论文主结果 | 约 10GB |
+| `large` | 2-4 小时 | 学术研究大样本 | 约 30GB |
+
+### 关键参数概览
+
+| 规模 | 渔网行列 | 随机点 | 叠加要素 | 常量栅格尺寸 |
+|------|----------|--------|----------|--------------|
+| `tiny` | 50 × 50 | 1,000 | 10,000 + 10,000 | 500 |
+| `small` | 100 × 100 | 10,000 | 100,000 + 100,000 | 1,000 |
+| `standard` | 500 × 500 | 50,000 | 300,000 + 300,000 | 5,000 |
+| `medium` | 1000 × 1000 | 100,000 | 1,000,000 + 1,000,000 | 10,000 |
+| `large` | 5000 × 5000 | 500,000 | 5,000,000 + 5,000,000 | 30,000 |
+
+## 输出目录结构
+
+默认输出根目录为 `C:\temp\arcgis_benchmark_data`。主流程下的结构如下：
+
+```text
+C:\temp\arcgis_benchmark_data\
+└── <时间戳>\
+    ├── tiny\
+    │   ├── comparison_report.md
+    │   ├── comparison_table.tex
+    │   ├── comparison_data.csv
+    │   ├── comparison_data.json
+    │   └── data\
+    │       ├── py2\
+    │       ├── py3\
+    │       └── os\
+    └── medium\
+        ├── comparison_report.md
+        └── data\
+            ├── py2\
+            ├── py3\
+            └── os\
+```
+
+说明：
+
+- 报告文件位于每个规模目录根部。
+- `data\py2`、`data\py3`、`data\os` 分别保存各方案原始结果与运行产物。
+- 仓库内的 `results\` 目录仅保留给旧脚本或桌面扩展研究流程，不是主 GUI 默认输出位置。
 
 ## 系统要求
 
 ### 必需组件
 
-- Windows 操作系统（10 或 11）
-- ArcGIS Desktop 10.x (Python 2.7) 或 ArcGIS Pro 3.x (Python 3.x)
-- 至少一个 ArcGIS 许可（用于 arcpy 测试）
+- Windows 操作系统。
+- ArcGIS Desktop 10.x（Python 2.7）。
+- ArcGIS Pro 3.x（Python 3.x）。
+- 建议 ArcGIS Advanced 许可。
 
-### 可选组件（开源对比）
+### 开源对比依赖
+
+开源库对比仅在 Python 3.x 环境下可用，可通过 GUI 自动安装，也可手动执行：
 
 ```bash
-# 安装开源库（Python 3.x 环境）
-pip install geopandas rasterio shapely pyogrio numpy
+"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" -m pip install geopandas rasterio shapely pyogrio numpy
 ```
 
-### 硬件要求
+### 建议硬件
 
-| 规模 | 建议内存 | 磁盘空间 |
-|------|----------|----------|
-| 超小/小型 | 8GB | 5GB |
-| 标准/中型 | 16GB | 20GB |
-| 大型 | 32GB+ | 50GB+ |
+| 场景 | 建议内存 | 备注 |
+|------|----------|------|
+| `tiny` / `small` | 8GB | 验证与快速测试 |
+| `standard` / `medium` | 16GB | 推荐日常环境 |
+| `large` | 32GB 及以上 | 适合论文最终实验 |
 
-## 数据存储
+## 项目结构
 
-测试数据将存储在 `C:\temp\arcgis_benchmark_data`，而非软件目录：
-- ✅ 便于统一管理临时数据
-- ✅ 可随时手动删除清理
-- ✅ 避免占用项目目录空间
+```text
+.
+├── benchmark_gui_modern.py         主 GUI
+├── launch_gui.py                   GUI 启动器
+├── 启动工具.vbs                    推荐启动入口
+├── run_benchmarks.py               命令行执行器
+├── analyze_results.py              报告分析器
+├── scripts\run_both_versions.py    双版本连续执行脚本
+├── benchmarks\                     基准测试实现
+├── config\settings.py              全局配置
+├── utils\settings_manager.py       GUI 配置与语言管理
+├── docs\                           辅助说明文档
+├── desktop_automation\             桌面软件扩展研究脚本
+└── results\                        旧脚本/扩展研究遗留目录
+```
 
-测试结果（小文件）仍存储在软件目录的 `results` 文件夹中。
+## v1.0 发布整理要点
 
-**自动清理：** 每次开始新测试时，会自动清理之前的测试数据，避免文件锁定问题。
+- 启动入口统一为现代 GUI，推荐使用 `启动工具.vbs`。
+- 文档统一为当前界面口径，不再描述旧版“五步向导”界面。
+- 结果目录统一为 `<时间戳>\<规模>\data\py2|py3|os` 布局。
+- GUI 支持多规模勾选、语言切换、字体缩放、日志保存/复制。
+- 三向对比报告与中文输出说明已同步完善。
 
 ## 故障排除
 
-### 1. 测试数据生成失败（文件锁定）
-**症状：** `ERROR 000464: 无法获取独占方案锁`
+### 1. 文件锁定
 
-**解决：**
-- 关闭所有 ArcGIS 相关程序（ArcMap、ArcGIS Pro）
-- 手动删除 `C:\temp\arcgis_benchmark_data` 目录
-- 重新运行测试
+症状：`ERROR 000464`
 
-### 2. 开源库测试失败
-**症状：** `ModuleNotFoundError: No module named 'geopandas'`
+处理方式：
 
-**解决：**
-```bash
-# 在 ArcGIS Pro Python 环境中安装
-"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" -m pip install geopandas rasterio shapely pyogrio
-```
+- 关闭 ArcMap、ArcGIS Pro 与相关属性表窗口。
+- 删除 `C:\temp\arcgis_benchmark_data` 下对应测试目录后重试。
 
-### 3. 找不到 Python 环境
-**症状：** 环境验证失败
+### 2. 开源库不可用
 
-**解决：**
-- 确保 ArcGIS Desktop 和 ArcGIS Pro 已正确安装
-- 检查 `benchmark_gui_modern.py` 中的路径配置
-- 或创建 `python_paths.config` 文件指定路径：
-```
-PYTHON27=C:\Python27\ArcGIS10.8\python.exe
-PYTHON3=C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe
-```
+症状：GUI 中开源库状态显示未安装，或命令行报 `ModuleNotFoundError`
 
-## 测试结果示例
+处理方式：
 
-### 三向对比示例（中型规模）
+- 在 GUI 中点击“安装开源库”。
+- 或手动执行上文的 `pip install` 命令。
 
-```
-测试项目          | Python 2.7 | Python 3.x | 开源库 | Py3加速 | OS加速
-------------------|------------|------------|--------|---------|--------
-CreateFishnet     | 0.998s     | 1.040s     | 0.161s | 0.96x   | 6.20x
-CreateRandomPoints| 0.371s     | 0.437s     | 0.075s | 0.85x   | 4.95x
-Buffer            | 1.193s     | 1.088s     | N/A    | 1.10x   | N/A
-Intersect         | 11.974s    | 7.463s     | N/A    | 1.60x   | N/A
-SpatialJoin       | 5.130s     | 6.029s     | N/A    | 0.85x   | N/A
-CalculateField    | 9.101s     | 6.746s     | N/A    | 1.35x   | N/A
-------------------|------------|------------|--------|---------|--------
-平均加速比        |            |            |        | 1.12x   | 5.57x
-```
+### 3. Python 环境未找到
 
-> 注：开源库（GeoPandas/Rasterio）在部分测试中显示出显著性能优势。
+处理方式：
 
-## 更新日志
+- 确认 ArcGIS Desktop 与 ArcGIS Pro 已正确安装。
+- 在 GUI 中重新指定 Python 2.7 与 Python 3.x 路径。
 
-### 最新版本
+### 4. 报告未生成
 
-- ✅ **新增**：开源库（GeoPandas/Rasterio）三向性能对比
-- ✅ **新增**：`--scale` CLI 参数支持动态切换数据规模
-- ✅ **新增**：`--opensource` 参数启用开源库测试
-- ✅ **修复**：`BaseBenchmark` 使 arcpy 成为可选依赖
-- ✅ **修复**：开源测试结果正确分离和对比
-- ✅ **优化**：数据规模配置（tiny/small/standard/medium/large）
-- ✅ **优化**：分析报告支持三向对比表格
+处理方式：
+
+- 确认 `py2` 与 `py3` 结果都已成功生成。
+- 如果启用了开源库，也确认 `data\os` 下存在结果文件。
+
+### 5. 需要调整心跳日志频率
+
+可在 `config/settings.py` 中修改 `PROGRESS_HEARTBEAT_INTERVAL`：
+
+- `0`：关闭心跳日志。
+- 正整数：按秒输出长任务进度心跳。
 
 ## 许可证
 
-本工具仅供学术研究使用。
-
-## 作者
-
-ArcGIS Python 性能研究小组
-
----
-
-*如有问题或建议，欢迎提交 Issue 或 Pull Request。*
+本工具面向学术研究与教学场景整理。

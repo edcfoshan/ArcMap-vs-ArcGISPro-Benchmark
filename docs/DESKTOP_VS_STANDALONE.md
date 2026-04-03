@@ -1,152 +1,64 @@
-# 研究扩展：桌面软件内运行 vs 独立解释器运行性能对比
+# 桌面软件窗口 vs 独立解释器 研究说明
 
-## 研究目标
+## 这份文档讲什么
 
-对比以下三种运行方式的性能差异：
-1. **ArcMap Python 窗口** 中运行脚本
-2. **ArcGIS Pro Python 窗口** 中运行脚本
-3. **独立 Python 解释器** 直接运行脚本
+本文件用于说明一个扩展研究方向：比较脚本在桌面软件窗口内执行，与在独立解释器中执行时的性能差异。
 
-## 研究意义
+它不是主发布版 `v1.0.0` 的默认使用流程，而是附加研究主题。
 
-### 理论意义
-- 了解桌面 GIS 软件的运行时开销
-- 分析 GUI 环境对 Python 执行效率的影响
-- 为 GIS 自动化脚本的最佳实践提供依据
+## 对比对象
 
-### 实际意义
-- 指导用户选择最高效的运行方式
-- 优化批处理任务的执行策略
-- 评估桌面软件性能瓶颈
+建议对比四种环境：
 
-## 测试方案设计
+1. 独立 Python 2.7
+2. 独立 Python 3.x
+3. ArcMap Python 窗口
+4. ArcGIS Pro Python 窗格
 
-### 测试环境
+## 研究价值
 
-| 运行方式 | 说明 |
-|----------|------|
-| ArcMap Python | 在 ArcMap 的 Python 窗口中执行 |
-| ArcGIS Pro Python | 在 Pro 的 Python 窗格中执行 |
-| 独立 Python 2.7 | 直接调用 C:\Python27\ArcGIS10.8\python.exe |
-| 独立 Python 3.x | 直接调用 ArcGIS Pro 的 python.exe |
+- 量化桌面 GIS 软件带来的运行时开销。
+- 评估 GUI、许可检查与交互环境对脚本性能的影响。
+- 为“批处理应该放在哪里跑”提供更直接的经验依据。
 
-### 测试内容
+## 当前仓库里的支持情况
 
-使用与之前相同的 12 项基准测试：
-- 6 项矢量测试
-- 4 项栅格测试
-- 2 项混合测试
+### 已有内容
 
-### 数据规模
+- `scripts/for_arcmap.py`
+- `scripts/for_arcgis_pro.py`
+- `desktop_automation/merge_desktop_results.py`
 
-建议使用 **小型数据**（快速验证）：
-- 循环次数：3 次
-- 预热次数：1 次
+### 需要注意
 
-## 预期结果
+- 这些扩展脚本仍基于仓库内 `results\raw` 与 `results\tables` 辅助目录。
+- 在使用前，需要把 `scripts/for_arcmap.py` 和 `scripts/for_arcgis_pro.py` 里的 `project_path` 改成当前仓库真实路径。
+- 主 GUI 默认输出在 `C:\temp\arcgis_benchmark_data`，如果要参加四环境合并分析，需要手动把独立解释器结果复制到 `results\raw`。
 
-### 假设
-1. **独立解释器 > 桌面软件内运行**
-   - 桌面软件有额外的 GUI 开销
-   - 许可检查和界面刷新消耗资源
+## 建议的实施方式
 
-2. **ArcGIS Pro > ArcMap**
-   - Pro 使用 Python 3.x，性能更好
-   - 64 位架构优势
+### 推荐流程
 
-3. **差距程度**
-   - 简单任务：差距较小（< 10%）
-   - 复杂任务：差距明显（10-30%）
-   - 大数据量：差距可能扩大
+1. 先用主工具跑出独立 Python 2.7 与 Python 3.x 结果。
+2. 将 `benchmark_results_py2.json` 与 `benchmark_results_py3.json` 复制到 `results\raw`。
+3. 在 ArcMap 与 ArcGIS Pro 窗口中分别执行脚本。
+4. 用 `desktop_automation\merge_desktop_results.py` 合并分析。
 
-## 实施方案
+### 推荐参数
 
-### 方案一：手动记录（简单）
+- 数据规模优先 `small`
+- `TEST_RUNS = 1`
+- `WARMUP_RUNS = 0`
 
-1. 在 ArcMap 中打开 Python 窗口
-2. 运行测试脚本，记录时间
-3. 在独立解释器中运行相同脚本
-4. 对比结果
+这样更适合人工介入流程，也能减少 ArcMap 崩溃或锁定风险。
 
-### 方案二：自动化测试（推荐）
+## 预期结论方向
 
-创建一个对比测试框架：
-- 生成可在桌面软件中执行的脚本
-- 自动记录执行时间
-- 生成对比报告
+- 独立解释器通常会快于桌面窗口。
+- ArcGIS Pro 预计整体优于 ArcMap。
+- 简单任务差距较小，复杂叠加或栅格任务差距可能更明显。
 
-## 技术挑战
+## 进一步参考
 
-### 1. ArcMap 中的 Python 执行
-```python
-# 在 ArcMap Python 窗口中执行
-import arcpy
-import time
-
-start = time.time()
-# 执行测试...
-elapsed = time.time() - start
-print("耗时: {}".format(elapsed))
-```
-
-### 2. ArcGIS Pro 中的 Python 执行
-```python
-# 在 Pro 的 Python 窗格中执行
-import arcpy
-import time
-
-start = time.time()
-# 执行测试...
-elapsed = time.time() - start
-print("耗时: {}".format(elapsed))
-```
-
-### 3. 自动化难点
-- 桌面软件需要人工启动
-- 需要手动复制粘贴代码
-- 结果需要手动记录
-
-## 建议的解决方案
-
-### 简化方案：分步对比
-
-**第一步：独立解释器测试**（已完成）
-- ✅ 已有完整框架
-- ✅ 可自动化运行
-
-**第二步：桌面软件手动测试**
-- 创建可在 ArcMap/Pro 中运行的脚本
-- 提供操作指南
-- 人工记录结果
-
-**第三步：结果合并分析**
-- 将手动测试结果导入
-- 生成完整对比报告
-
-## 可行性评估
-
-| 方面 | 评估 | 说明 |
-|------|------|------|
-| 技术可行性 | ✅ 高 | 现有框架可直接使用 |
-| 实施难度 | ⚠️ 中 | 桌面软件部分需人工操作 |
-| 数据可靠性 | ✅ 高 | 使用相同测试用例 |
-| 研究价值 | ✅ 高 | 对实际工作有指导意义 |
-
-## 结论
-
-**这个研究内容完全可以实现！**
-
-建议采用 **简化方案**：
-1. 使用现有框架完成独立解释器测试（自动化）
-2. 创建可在桌面软件中运行的测试脚本
-3. 人工执行桌面软件测试并记录结果
-4. 合并分析生成最终报告
-
-这样既能保证研究的完整性，又能控制实施难度。
-
----
-
-**是否需要我为你实现这个扩展研究？**
-- 创建 ArcMap/Pro 可用的测试脚本
-- 创建结果合并分析工具
-- 提供详细的操作指南
+- `docs/DESKTOP_TEST_GUIDE.md`：具体操作步骤。
+- `docs/RESEARCH_EXTENSION_SUMMARY.md`：扩展研究的价值与实施建议。

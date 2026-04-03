@@ -1,64 +1,81 @@
-# 制作EXE可执行文件
+# GUI 打包为 EXE 说明
 
-## 方法一：使用PyInstaller（推荐）
+## 适用范围
 
-### 步骤1：安装依赖
+本说明面向 `v1.0.0` GUI 打包。仓库当前没有内置 `create_exe.py` 或 `convert_icon.py`，建议直接使用 `PyInstaller` 或 `auto-py-to-exe`。
+
+## 方法一：PyInstaller（推荐）
+
+### 1. 安装依赖
+
 ```bash
 pip install pyinstaller pillow
 ```
 
-### 步骤2：准备图标
-将您的图片转换为ico格式：
-```bash
-python convert_icon.py your_image.png
+### 2. 确认图标文件
+
+仓库已自带：
+
+```text
+resources\icon.ico
 ```
 
-或者直接放在 `resources/icon.ico`
+### 3. 在仓库根目录执行打包命令
 
-### 步骤3：创建EXE
-```bash
-python create_exe.py
+```powershell
+pyinstaller `
+  --name ArcGISBenchmark-v1.0 `
+  --windowed `
+  --clean `
+  --icon resources\icon.ico `
+  --add-data "config;config" `
+  --add-data "utils;utils" `
+  --add-data "benchmarks;benchmarks" `
+  --add-data "data;data" `
+  --add-data "resources;resources" `
+  benchmark_gui_modern.py
 ```
 
-或者在命令行直接运行：
-```bash
-pyinstaller --name=ArcGIS_Benchmark --windowed --onefile --icon=resources/icon.ico --add-data=config;config --add-data=utils;utils --add-data=benchmarks;benchmarks --add-data=data;data benchmark_gui_modern.py
+### 4. 产物位置
+
+```text
+dist\ArcGISBenchmark-v1.0.exe
 ```
 
-### 步骤4：创建桌面快捷方式
-运行生成的 `create_desktop_shortcut.vbs`
+如果改为非 `--onefile` 模式，则 `dist\ArcGISBenchmark-v1.0\` 目录下会包含完整运行文件。
 
-## 方法二：使用auto-py-to-exe（图形界面）
+## 方法二：auto-py-to-exe
 
 ```bash
 pip install auto-py-to-exe
 auto-py-to-exe
 ```
 
-然后在浏览器中配置：
-- Script Location: `benchmark_gui_modern.py`
-- Onefile: `One File`
-- Console Window: `Window Based`
-- Icon: 选择 `resources/icon.ico`
-- Additional Files: 添加 `config`, `utils`, `benchmarks`, `data` 文件夹
+建议配置：
 
-## 打包后的文件
+- Script Location：`benchmark_gui_modern.py`
+- Onefile：按需选择
+- Console Window：`Window Based`
+- Icon：`resources\icon.ico`
+- Additional Files：`config`、`utils`、`benchmarks`、`data`、`resources`
 
-打包完成后，文件结构：
-```
-dist/
-├── ArcGIS_Benchmark.exe    # 主程序
-└── ... (依赖文件)
-```
+## 打包建议
+
+### 建议优先打包 GUI 主程序
+
+- 主目标是 `benchmark_gui_modern.py`
+- 不需要把 `launch_gui.py`、`启动工具.vbs` 一起打进 EXE
+- VBS 和 BAT 启动器更适合源码发布包，不是 EXE 主入口
+
+### 发布前建议检查
+
+1. EXE 能正常拉起 GUI。
+2. GUI 中 Python 路径可手动选择。
+3. `tiny` 规模测试能够跑通。
+4. 结果目录与报告文件能正常生成。
 
 ## 注意事项
 
-1. **杀毒软件误报**：某些杀毒软件可能会误报PyInstaller打包的exe，请添加信任
-2. **文件大小**：单文件exe会比较大（约50-100MB），因为包含了Python解释器
-3. **首次运行**：首次运行可能会稍慢，因为需要解压临时文件
-
-## 分发建议
-
-1. 将 `resources` 文件夹和exe一起分发
-2. 或者使用安装程序（如Inno Setup）创建安装包
-3. 可以创建绿色版压缩包，解压即用
+1. ArcGIS 相关环境不一定能被完整静态打包，发布 EXE 时仍应说明需要本机具备 ArcGIS 环境。
+2. 单文件 EXE 体积通常较大，首次启动也会更慢。
+3. 杀毒软件可能会对 PyInstaller 产物误报，发布前最好做一次本机白名单验证。

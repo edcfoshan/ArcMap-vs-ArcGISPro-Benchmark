@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import arcpy
 from config import settings
 from utils.timer import ProgressHeartbeat
+from utils.raster_utils import create_constant_raster
 
 
 class TestDataGenerator(object):
@@ -519,30 +520,21 @@ class TestDataGenerator(object):
         # Save raster as file instead of in GDB (GDB has issues with rasters)
         raster_path = os.path.join(self.data_dir, "constant_raster.tif")
 
-        # Pure arcpy method: Use Raster Calculator to create a constant raster
-        # Create a simple calculation that results in all 1's
         extent = "0 0 {} {}".format(size, size)
-        cell_size = 1
-
         try:
-            # Method 1: Try arcpy.sa.CreateConstantRaster (Pro style)
-            print("  尝试使用 arcpy.sa.CreateConstantRaster 创建...")
-            out_raster = arcpy.sa.CreateConstantRaster(1, "INTEGER", cell_size, extent)
-            print("  正在保存栅格...")
-            out_raster.save(raster_path)
-            print("  [OK] 完成: {}x{} 栅格 (使用 arcpy.sa)".format(size, size))
+            create_constant_raster(
+                raster_path,
+                cell_size=1,
+                extent=extent,
+                value=1,
+                spatial_reference=self.spatial_ref,
+                use_spatial_analyst=False
+            )
+            print("  [OK] 完成: {}x{} 栅格".format(size, size))
             return raster_path
-        except Exception as e1:
-            print("  方法1失败: {}".format(str(e1)[:50]))
-            try:
-                # Method 2: Try arcpy.CreateConstantRaster_sa (Desktop style)
-                print("  尝试使用 CreateConstantRaster_sa 创建...")
-                arcpy.CreateConstantRaster_sa(raster_path, 1, "INTEGER", cell_size, extent)
-                print("  [OK] 完成: {}x{} 栅格 (使用 CreateConstantRaster_sa)".format(size, size))
-                return raster_path
-            except Exception as e:
-                print("  [ERROR] {}".format(str(e)[:100]))
-                return None
+        except Exception as e:
+            print("  [ERROR] {}".format(str(e)[:100]))
+            return None
     
     def generate_all(self, force=False):
         """Generate all test data if not exists or doesn't match scale"""

@@ -22,6 +22,7 @@ except ImportError:
 from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
 from utils.timer import ProgressHeartbeat
+from utils.raster_utils import create_constant_raster
 
 
 class MultiprocessBenchmark(BaseBenchmark):
@@ -714,19 +715,7 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
         
         cell_size = 360.0 / self.size
         extent = "-180 -90 180 90"
-        
-        try:
-            from arcpy.sa import CreateConstantRaster
-            out_raster = CreateConstantRaster(1, "INTEGER", cell_size, extent)
-            out_raster.save(self.output_raster)
-        except:
-            arcpy.CreateConstantRaster_sa(
-                self.output_raster,
-                1,
-                "INTEGER",
-                cell_size,
-                extent
-            )
+        create_constant_raster(self.output_raster, cell_size, extent, value=1, use_spatial_analyst=False)
         
         return {'raster_created': self.output_raster, 'mode': 'single'}
     
@@ -752,18 +741,7 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
             output_path = os.path.join(self.temp_dir, "raster_w%d.tif" % worker_id)
             
             try:
-                try:
-                    from arcpy.sa import CreateConstantRaster
-                    out_raster = CreateConstantRaster(1, "INTEGER", cell_size, extent)
-                    out_raster.save(output_path)
-                except:
-                    arcpy.CreateConstantRaster_sa(
-                        output_path,
-                        1,
-                        "INTEGER",
-                        cell_size,
-                        extent
-                    )
+                create_constant_raster(output_path, cell_size, extent, value=1, use_spatial_analyst=False)
                 partition_rasters.append(output_path)
             except Exception as e:
                 print("    Worker %d failed: %s" % (worker_id, str(e)[:50]))

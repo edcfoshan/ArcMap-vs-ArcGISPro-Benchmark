@@ -1,211 +1,138 @@
-# 桌面软件 vs 独立解释器 测试指南
+# 桌面软件窗口 vs 独立解释器 测试指南
 
-## 研究目标
+> 这是扩展研究流程，不属于 `v1.0.0` 主 GUI 的默认执行链路。
 
-对比四种运行方式的性能差异：
-1. ✅ **独立 Python 2.7**（已完成）
-2. ✅ **独立 Python 3.x**（已完成）
-3. ⏳ **ArcMap Python 窗口**（需手动执行）
-4. ⏳ **ArcGIS Pro Python 窗格**（需手动执行）
+## 适用场景
 
-## 测试原理
+如果你想额外比较以下四种运行方式，可以使用本指南：
 
-### 为什么要做这个对比？
+1. 独立 Python 2.7
+2. 独立 Python 3.x
+3. ArcMap Python 窗口
+4. ArcGIS Pro Python 窗格
 
-| 运行方式 | 特点 | 预期性能 |
-|----------|------|----------|
-| 独立解释器 | 无GUI开销，直接执行 | 最快 |
-| 桌面软件内 | 有GUI、许可检查等开销 | 较慢 |
+## 先理解当前状态
 
-### 预期结果
-- 独立解释器 > 桌面软件内运行
-- 差距可能在 5-30% 之间
-- 复杂任务差距可能更大
+### 主发布流程
 
----
+主 GUI 和主命令行默认把结果输出到：
 
-## 操作步骤
-
-### 第一步：完成独立解释器测试（已完成）
-
-使用 GUI 工具或命令行完成：
-```bash
-# Python 2.7
-C:\Python27\ArcGIS10.8\python.exe run_benchmarks.py
-
-# Python 3.x
-"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" run_benchmarks.py
+```text
+C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\
 ```
 
-结果文件：
-- `C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\data\py2\benchmark_results_py2.json`
-- `C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\data\py3\benchmark_results_py3.json`
+### 扩展研究脚本
 
----
+桌面窗口扩展脚本仍使用仓库内的旧式辅助目录：
 
-### 第二步：ArcMap Python 窗口测试
+```text
+results\raw
+results\tables
+```
 
-#### 1. 打开 ArcMap
-- 启动 ArcMap 10.x
-- 等待完全加载
+因此，做四环境对比时，需要把主流程生成的独立解释器结果复制到 `results\raw` 中，再运行桌面窗口脚本和合并脚本。
 
-#### 2. 打开 Python 窗口
-- 菜单：Geoprocessing > Python
-- 或者按 `Ctrl + Alt + P`
+## 第一步：准备独立解释器结果
 
-#### 3. 执行测试脚本
+先用主工具跑出 Python 2.7 与 Python 3.x 的基准结果，然后把以下文件复制到仓库的 `results\raw` 目录：
 
-**方法一：直接复制粘贴代码**
+- `benchmark_results_py2.json`
+- `benchmark_results_py3.json`
 
-打开文件 `scripts/for_arcmap.py`，复制全部内容，粘贴到 ArcMap Python 窗口，按 Enter 执行。
+通常可从主输出目录中找到它们，例如：
 
-**方法二：使用 import**
+```text
+C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\data\py2\benchmark_results_py2.json
+C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\data\py3\benchmark_results_py3.json
+```
 
-在 Python 窗口中输入：
+复制目标：
+
+```text
+results\raw\benchmark_results_py2.json
+results\raw\benchmark_results_py3.json
+```
+
+## 第二步：修改桌面脚本中的项目路径
+
+在执行前，先修改以下文件里的 `project_path`：
+
+- `scripts/for_arcmap.py`
+- `scripts/for_arcgis_pro.py`
+
+把它改成当前仓库的真实绝对路径，例如：
+
 ```python
-import sys
-sys.path.insert(0, r"D:\测试arcmap与gispro的运行速度\arcgis_performance_benchmark")
-exec(open(r"D:\测试arcmap与gispro的运行速度\arcgis_performance_benchmark\scripts\for_arcmap.py").read())
+project_path = r"C:\Users\Administrator\Documents\ArcMap-vs-ArcGISPro-Benchmark"
 ```
 
-#### 4. 等待完成
-- 测试会自动运行 12 项基准测试
-- 每个测试会显示进度
-- 完成后会提示结果保存位置
+否则脚本会继续使用旧示例路径，无法正常导入项目模块。
 
-#### 5. 结果文件
-- `C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\data\py2\benchmark_results_py2.json`
+## 第三步：在 ArcMap 中执行
 
----
+1. 打开 ArcMap。
+2. 打开 Python 窗口。
+3. 将 `scripts/for_arcmap.py` 全部内容复制进去执行。
+4. 等待脚本完成。
 
-### 第三步：ArcGIS Pro Python 窗格测试
+执行完成后，结果会写入：
 
-#### 1. 打开 ArcGIS Pro
-- 启动 ArcGIS Pro
-- 可以新建一个空白项目
-
-#### 2. 打开 Python 窗格
-- 菜单：Analysis > Python
-- 或者按 `Ctrl + 1`
-
-#### 3. 执行测试脚本
-
-**方法一：直接复制粘贴代码**
-
-打开文件 `scripts/for_arcgis_pro.py`，复制全部内容，粘贴到 Pro Python 窗格，按 Enter 执行。
-
-**方法二：使用 import**
-
-在 Python 窗格中输入：
-```python
-import sys
-sys.path.insert(0, r"D:\测试arcmap与gispro的运行速度\arcgis_performance_benchmark")
-exec(open(r"D:\测试arcmap与gispro的运行速度\arcgis_performance_benchmark\scripts\for_arcgis_pro.py").read())
+```text
+results\raw\benchmark_results_arcmap.json
 ```
 
-#### 4. 等待完成
-- 测试会自动运行 12 项基准测试
-- 完成后会提示结果保存位置
+## 第四步：在 ArcGIS Pro 中执行
 
-#### 5. 结果文件
-- `C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\data\py3\benchmark_results_py3.json`
+1. 打开 ArcGIS Pro。
+2. 打开 Python 窗格。
+3. 将 `scripts/for_arcgis_pro.py` 全部内容复制进去执行。
+4. 等待脚本完成。
 
----
+执行完成后，结果会写入：
 
-### 第四步：合并分析结果
+```text
+results\raw\benchmark_results_arcgis_pro.json
+```
 
-当四种运行方式都测试完成后，运行合并分析工具：
+## 第五步：合并分析
+
+当四类结果都准备好后，执行：
 
 ```bash
-# 使用 Python 3
 "C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" desktop_automation\merge_desktop_results.py
 ```
 
-或者双击 GUI 中的「合并桌面软件结果」按钮（如果有）。
+默认会读取：
 
-生成的报告：
-- `C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\comparison_report.md`
-- `C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\comparison_data.csv`
-
----
-
-## 数据规模建议
-
-由于桌面软件内运行需要人工操作，建议使用**小型数据**：
-
-编辑 `config/settings.py`：
-```python
-DATA_SCALE = 'small'  # 小型数据
-TEST_RUNS = 1         # 只运行1次
-WARMUP_RUNS = 0       # 无预热
+```text
+results\raw\
 ```
 
-这样每次测试约 5-10 分钟，便于操作。
+并输出到：
 
----
+```text
+results\tables\
+```
 
-## 预期研究成果
+主要输出文件：
 
-### 可以回答的问题
+- `desktop_comparison_report.md`
+- `desktop_comparison_data.csv`
 
-1. **桌面软件运行慢多少？**
-   - ArcMap Python 窗口 vs 独立 Python 2.7
-   - ArcGIS Pro Python 窗格 vs 独立 Python 3.x
+## 推荐参数
 
-2. **不同任务的差异？**
-   - 简单任务（如字段计算）差异较小
-   - 复杂任务（如叠加分析）差异较大
+桌面窗口测试建议先用较小规模：
 
-3. **实际建议**
-   - 批量处理建议使用独立解释器
-   - 交互式开发可以使用桌面软件
+```python
+DATA_SCALE = 'small'
+TEST_RUNS = 1
+WARMUP_RUNS = 0
+```
 
-### 论文价值
-
-- 为 GIS 自动化最佳实践提供数据支持
-- 量化桌面软件的运行时开销
-- 指导用户选择合适的运行方式
-
----
+这样更适合人工操作，也能减少 ArcMap 内存压力。
 
 ## 注意事项
 
-1. **测试环境一致性**
-   - 在同一台电脑上测试
-   - 关闭其他占用资源的程序
-   - 确保 ArcGIS 许可可用
-
-2. **ArcMap 特定注意**
-   - ArcMap 是 32 位程序，内存有限
-   - 大型数据测试可能导致内存不足
-   - 建议使用小型数据
-
-3. **ArcGIS Pro 特定注意**
-   - Pro 是 64 位，性能更好
-   - 但需要更多内存
-
-4. **结果可比性**
-   - 确保使用相同的数据规模
-   - 确保使用相同的循环次数
-   - 记录测试时的系统状态
-
----
-
-## 替代方案
-
-如果自动化测试有困难，可以改为**手动记录**：
-
-1. 在桌面软件中执行单个测试
-2. 手动记录执行时间
-3. 创建对比表格
-4. 这种方法虽然繁琐，但更灵活
-
----
-
-## 技术支持
-
-如果在测试过程中遇到问题：
-1. 检查 ArcGIS 许可是否正常
-2. 检查 Python 路径是否正确
-3. 检查数据文件是否存在
-4. 查看错误日志排查问题
+- ArcMap 为 32 位，尽量避免直接跑大规模数据。
+- 四种运行方式必须使用相同的数据规模与运行次数，结果才有可比性。
+- 如果桌面窗口中出现路径错误，优先检查 `project_path` 是否已改成当前仓库路径。

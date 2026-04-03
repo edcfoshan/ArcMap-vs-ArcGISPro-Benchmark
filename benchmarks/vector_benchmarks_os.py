@@ -27,6 +27,20 @@ from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
 
 
+BUFFER_PROJECTED_CRS = "EPSG:3857"
+
+
+def buffer_in_projected_crs(gdf, buffer_distance_meters, projected_crs=BUFFER_PROJECTED_CRS):
+    """Buffer geometries in a projected CRS and return to the source CRS."""
+    source_crs = gdf.crs
+    if source_crs is None:
+        raise RuntimeError("Input GeoDataFrame must define a CRS for buffer benchmarking")
+
+    projected = gdf.to_crs(projected_crs)
+    projected['geometry'] = projected.buffer(buffer_distance_meters)
+    return projected.to_crs(source_crs)
+
+
 class VectorBenchmarksOS(object):
     """Collection of vector data benchmarks using open-source libraries"""
     
@@ -132,7 +146,7 @@ class V3_Buffer_OS(BaseBenchmark):
         self.gdb_path = None
         self.input_layer = None
         self.output_path = None
-        self.buffer_distance = 1.0  # degrees
+        self.buffer_distance = 1000.0  # meters
     
     def setup(self):
         self.gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
@@ -150,8 +164,8 @@ class V3_Buffer_OS(BaseBenchmark):
         # Read input points from GDB (using layer parameter)
         gdf = gpd.read_file(self.gdb_path, layer=self.input_layer)
         
-        # Perform buffer
-        gdf['geometry'] = gdf.buffer(self.buffer_distance)
+        # Buffer in a projected CRS so the 1 km distance matches the ArcPy benchmark.
+        gdf = buffer_in_projected_crs(gdf, self.buffer_distance)
         
         # Save output
         gdf.to_file(self.output_path, driver="GPKG")

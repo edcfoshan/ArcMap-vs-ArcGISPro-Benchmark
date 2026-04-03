@@ -20,6 +20,7 @@ except ImportError:
 
 from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
+from utils.raster_utils import create_constant_raster, double_raster, spatial_analyst_available
 
 
 class RasterBenchmarks(object):
@@ -67,27 +68,17 @@ class R1_CreateConstantRaster(BaseBenchmark):
         if arcpy.Exists(self.output_raster):
             arcpy.Delete_management(self.output_raster)
         
-        # Create constant raster using arcpy.sa (pure arcpy, no numpy)
         cell_size = 360.0 / self.size
         extent = "-180 -90 180 90"
-        
-        try:
-            # ArcGIS Pro style: CreateConstantRaster is a function in arcpy.sa
-            out_raster = CreateConstantRaster(1, "INTEGER", cell_size, extent)
-            out_raster.save(self.output_raster)
-        except:
-            # ArcGIS Desktop style: use arcpy.CreateConstantRaster_sa
-            arcpy.CreateConstantRaster_sa(
-                self.output_raster,
-                1,
-                "INTEGER",
-                cell_size,
-                extent
-            )
-        
-        # Add projection
         sr = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
-        arcpy.DefineProjection_management(self.output_raster, sr)
+        create_constant_raster(
+            self.output_raster,
+            cell_size=cell_size,
+            extent=extent,
+            value=1,
+            spatial_reference=sr,
+            use_spatial_analyst=False
+        )
         
         # Get raster info
         desc = arcpy.Describe(self.output_raster)
@@ -117,16 +108,21 @@ class R2_Resample(BaseBenchmark):
         self.output_raster = os.path.join(settings.DATA_DIR, "R2_resample_output.tif")
         
         # Input raster should already exist from data generation
-        # If not, we create it using arcpy.sa (pure arcpy)
+        # If not, create it with a license-safe fallback
         if not arcpy.Exists(self.input_raster):
-            print("    Warning: input raster not found, creating with arcpy.sa...")
+            print("    Warning: input raster not found, creating fallback constant raster...")
             try:
                 cell_size = 360.0 / self.source_size
                 extent = "-180 -90 180 90"
-                out_raster = CreateConstantRaster(1, "INTEGER", cell_size, extent)
-                out_raster.save(self.input_raster)
                 sr = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
-                arcpy.DefineProjection_management(self.input_raster, sr)
+                create_constant_raster(
+                    self.input_raster,
+                    cell_size=cell_size,
+                    extent=extent,
+                    value=1,
+                    spatial_reference=sr,
+                    use_spatial_analyst=False
+                )
             except Exception as e:
                 # Python 2/3 compatible error printing
                 try:
@@ -252,45 +248,7 @@ class R4_RasterCalculator(BaseBenchmark):
         # Delete if exists
         if arcpy.Exists(self.output_raster):
             arcpy.Delete_management(self.output_raster)
-
-        # Try multiple approaches for compatibility with both ArcGIS Desktop and Pro
-        last_error = None
-
-        try:
-            # Method 1: ArcGIS Pro style using arcpy.sa.Raster
-            from arcpy.sa import Raster, Int, Times
-            in_ras = Raster(self.input_raster)
-            out_ras = Int(Times(in_ras, 2))
-            out_ras.save(self.output_raster)
-        except Exception as e1:
-            last_error = e1
-            try:
-                # Method 2: Use arcpy.sa Times and Int directly
-                import arcpy.sa as sa
-                in_ras = sa.Raster(self.input_raster)
-                out_ras = sa.Int(in_ras * 2)
-                out_ras.save(self.output_raster)
-            except Exception as e2:
-                last_error = e2
-                try:
-                    # Method 3: Alternative using RasterCalculator tool (if available)
-                    arcpy.env.workspace = os.path.dirname(self.output_raster)
-                    out_name = os.path.basename(self.output_raster)
-                    # Check if tool exists before calling
-                    if hasattr(arcpy, 'gp') and hasattr(arcpy.gp, 'RasterCalculator_sa'):
-                        arcpy.gp.RasterCalculator_sa('"{}" * 2'.format(self.input_raster), self.output_raster)
-                    elif hasattr(arcpy, 'management') and hasattr(arcpy.management, 'RasterCalculator'):
-                        arcpy.management.RasterCalculator('"{}" * 2'.format(self.input_raster), self.output_raster)
-                    else:
-                        # Fallback: use Con tool to create modified raster
-                        import arcpy.sa as sa
-                        in_ras = sa.Raster(self.input_raster)
-                        out_ras = sa.Con(in_ras >= 0, in_ras * 2, in_ras * 2)
-                        out_ras.save(self.output_raster)
-                except Exception as e3:
-                    last_error = e3
-                    # Re-raise the last error to fail the benchmark
-                    raise last_error
+        double_raster(self.input_raster, self.output_raster, use_spatial_analyst=False)
 
         # Get raster info
         desc = arcpy.Describe(self.output_raster)

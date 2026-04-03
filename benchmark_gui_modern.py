@@ -7,12 +7,14 @@ ArcGIS Python2、3 与开源库性能对比测试工具 - Modern UI Design
 from __future__ import print_function, division, absolute_import
 import sys
 import os
+import re
 import subprocess
 import threading
 import json
 import time
 import webbrowser
 from datetime import datetime, timedelta
+from collections import defaultdict, deque
 
 try:
     import tkinter as tk
@@ -603,6 +605,13 @@ class ModernBenchmarkGUI(object):
         self.total_tests = 0
         self.test_queue = []
         self.current_output_dir = ''
+        self._eta_clock = time.perf_counter if hasattr(time, 'perf_counter') else time.time
+        self._eta_unit_samples = defaultdict(lambda: deque(maxlen=5))
+        self._eta_family_samples = defaultdict(lambda: deque(maxlen=8))
+        self._eta_overall_samples = deque(maxlen=12)
+        self._eta_active_unit_name = None
+        self._eta_active_unit_started_at = None
+        self._eta_last_heartbeat_elapsed = 0.0
         self.os_available = False
         self.os_missing_modules = []
         self.os_status_reason = ''
@@ -756,7 +765,6 @@ class ModernBenchmarkGUI(object):
     def _create_scrollable_sidebar(self, parent):
         """创建可滚动的左侧栏容器。"""
         sidebar = tk.Frame(parent, bg=COLORS['bg_primary'])
-        sidebar.pack(side='left', fill='y', padx=(0, 10))
         sidebar_width = max(int(500 * self.font_scale), 420)
         sidebar.config(width=sidebar_width)
         sidebar.pack_propagate(False)
@@ -796,7 +804,7 @@ class ModernBenchmarkGUI(object):
         self.sidebar_content = content
         self.sidebar_scrollbar = scrollbar
         self.root.after(0, _sync_scrollbar)
-        return content
+        return sidebar, content
 
     def _create_big_checkbox(self, parent, text, variable):
         """创建大号复选框，使用浅色背景让勾选更明显"""
@@ -1041,15 +1049,37 @@ class ModernBenchmarkGUI(object):
         self._create_header()
 
         # 主内容区
-        main_container = tk.Frame(self.root, bg=COLORS['bg_primary'])
+        sidebar_width = max(int(500 * self.font_scale), 420)
+        main_container = tk.PanedWindow(
+            self.root,
+            orient=tk.HORIZONTAL,
+            bg=COLORS['bg_primary'],
+            bd=0,
+            sashwidth=8,
+            sashrelief='raised',
+            opaqueresize=True,
+            showhandle=False,
+        )
         main_container.pack(fill='both', expand=True, padx=20, pady=15)
+        self.main_container = main_container
 
         # 左侧控制面板（可滚动）
-        left_panel = self._create_scrollable_sidebar(main_container)
+        left_panel_container, left_panel = self._create_scrollable_sidebar(main_container)
 
         # 右侧内容区
         right_panel = tk.Frame(main_container, bg=COLORS['bg_primary'])
-        right_panel.pack(side='left', fill='both', expand=True)
+        main_container.add(left_panel_container)
+        main_container.add(right_panel)
+
+        def _set_initial_splitter():
+            try:
+                main_container.update_idletasks()
+                if hasattr(main_container, 'sash_place'):
+                    main_container.sash_place(0, sidebar_width, 0)
+            except Exception:
+                pass
+
+        self.root.after(0, _set_initial_splitter)
 
         # 左侧卡片
         self._create_quick_settings_card(left_panel)
@@ -1722,8 +1752,6 @@ class ModernBenchmarkGUI(object):
             self._create_styles()
             if hasattr(self, 'header_frame'):
                 self.header_frame.config(height=int(80 * self.font_scale))
-            if hasattr(self, 'sidebar_frame'):
-                self.sidebar_frame.config(width=max(int(500 * self.font_scale), 420))
             if hasattr(self, 'total_progress'):
                 self.total_progress.config(height=int(22 * self.font_scale))
 
@@ -1860,6 +1888,10 @@ class ModernBenchmarkGUI(object):
         self.log_text.see('end')
         self.log_text.config(state='disabled')
 
+        if self.is_running:
+            self._update_eta_hint_from_log(message)
+            self._refresh_eta_label()
+
     def _clear_log(self):
         self.log_text.config(state='normal')
         self.log_text.delete(1.0, 'end')
@@ -1980,8 +2012,151 @@ class ModernBenchmarkGUI(object):
             font=self._font(10, bold=True)
         )
 
-    def _advance_progress(self, increment=1, test_name=''):
+    def _eta_family_for_unit(self, unit_name):
+        """将日志中的单位名归入大类，便于计算更稳的 ETA"""
+        if not unit_name:
+            return 'unknown'
+        if unit_name == '__setup__':
+            return 'setup'
+        if unit_name.startswith('MP_') and unit_name.endswith('_OS'):
+            return 'opensource_multiprocess'
+        if unit_name.startswith('MP_'):
+            return 'multiprocess'
+        if unit_name.endswith('_OS'):
+            return 'opensource_regular'
+        return 'regular'
+
+    def _eta_average(self, samples):
+        """计算样本平均值"""
+        if not samples:
+            return None
+        return sum(samples) / float(len(samples))
+
+    def _eta_record_unit_duration(self, unit_name, duration):
+        """记录一个完整进度单位的耗时"""
+        if duration is None:
+            return
+
+        unit_name = unit_name or '__unknown__'
+        duration = max(0.0, float(duration))
+        self._eta_unit_samples[unit_name].append(duration)
+        self._eta_family_samples[self._eta_family_for_unit(unit_name)].append(duration)
+        self._eta_overall_samples.append(duration)
+
+    def _eta_finalize_current_unit(self, finish_at=None):
+        """结束当前单位，并把它的耗时写入样本"""
+        if self._eta_active_unit_started_at is None:
+            return
+
+        finish_at = finish_at if finish_at is not None else self._eta_clock()
+        duration = max(0.0, finish_at - self._eta_active_unit_started_at)
+        self._eta_record_unit_duration(self._eta_active_unit_name, duration)
+        self._eta_active_unit_started_at = None
+        self._eta_active_unit_name = None
+        self._eta_last_heartbeat_elapsed = 0.0
+
+    def _eta_begin_new_unit(self, unit_name, started_at=None):
+        """开始一个新的进度单位"""
+        started_at = started_at if started_at is not None else self._eta_clock()
+        self._eta_finalize_current_unit(started_at)
+        self._eta_active_unit_name = unit_name or '__unknown__'
+        self._eta_active_unit_started_at = started_at
+        self._eta_last_heartbeat_elapsed = 0.0
+
+    def _eta_current_expected_duration(self):
+        """估算当前单位的典型耗时"""
+        unit_name = self._eta_active_unit_name or '__unknown__'
+
+        exact_avg = self._eta_average(self._eta_unit_samples.get(unit_name))
+        if exact_avg is not None:
+            return exact_avg
+
+        family_avg = self._eta_average(self._eta_family_samples.get(self._eta_family_for_unit(unit_name)))
+        if family_avg is not None:
+            return family_avg
+
+        overall_avg = self._eta_average(self._eta_overall_samples)
+        if overall_avg is not None:
+            return overall_avg
+
+        return None
+
+    def _update_eta_hint_from_log(self, message):
+        """从日志内容中提取当前长任务的心跳信息"""
+        if not message or '仍在运行' not in message or '已用时' not in message:
+            return
+
+        match = re.search(r'已用时\s+([0-9]+(?:\.[0-9]+)?)s', message)
+        if match:
+            try:
+                self._eta_last_heartbeat_elapsed = float(match.group(1))
+            except Exception:
+                pass
+
+    def _extract_progress_unit_name(self, message):
+        """从子进程日志中提取当前进度单位名"""
+        if not message:
+            return None
+
+        text = message.strip()
+        if not text:
+            return None
+
+        if '正在执行:' in text and '(类别:' in text:
+            try:
+                return text.split('正在执行:', 1)[1].split('(类别:', 1)[0].strip()
+            except Exception:
+                return None
+
+        if 'Running multiprocess comparison:' in text:
+            try:
+                return text.split('Running multiprocess comparison:', 1)[1].strip()
+            except Exception:
+                return None
+
+        return None
+
+    def _refresh_eta_label(self):
+        """根据当前样本和日志心跳刷新 ETA 标签"""
+        if not hasattr(self, 'eta_label'):
+            return
+
+        if not self.is_running or self.total_tests <= 0 or self.completed_tests <= 0:
+            self.eta_label.config(text="")
+            return
+
+        if self._eta_active_unit_started_at is None:
+            self.eta_label.config(text="")
+            return
+
+        now = self._eta_clock()
+        current_elapsed = max(0.0, now - self._eta_active_unit_started_at)
+        if self._eta_last_heartbeat_elapsed > 0:
+            current_elapsed = max(current_elapsed, self._eta_last_heartbeat_elapsed)
+
+        current_avg = self._eta_current_expected_duration()
+        overall_avg = self._eta_average(self._eta_overall_samples)
+        if current_avg is None:
+            # 没有历史样本时，用当前运行时间做一个保守估计，避免 ETA 过早归零。
+            future_avg = max(1.0, current_elapsed * 0.75)
+            current_remaining = max(1.0, current_elapsed * 0.25)
+        else:
+            future_avg = overall_avg if overall_avg is not None else current_avg
+            future_avg = max(0.1, future_avg)
+            current_total = max(current_avg, current_elapsed * 1.35)
+            current_remaining = max(0.0, current_total - current_elapsed)
+
+        remaining_units = max(0, self.total_tests - self.completed_tests)
+        eta_seconds = current_remaining + (remaining_units * future_avg)
+        eta_seconds = max(0.0, eta_seconds)
+
+        eta_str = str(timedelta(seconds=int(round(eta_seconds))))
+        self.eta_label.config(text="{}: {}".format(self.sm.get_text('eta'), eta_str))
+
+    def _advance_progress(self, increment=1, test_name='', eta_name=None):
         """推进总进度"""
+        if increment > 0:
+            self._eta_begin_new_unit(eta_name or '__unknown__')
         self._update_progress(self.completed_tests + increment, self.total_tests, test_name)
 
     def _update_progress(self, current, total, test_name=''):
@@ -1996,14 +2171,7 @@ class ModernBenchmarkGUI(object):
         self._render_total_progress()
 
         # Update ETA
-        if total > 0 and self.start_time and current > 0:
-            elapsed = (datetime.now() - self.start_time).total_seconds()
-            avg_time = elapsed / current
-            remaining = avg_time * (total - current)
-            eta_str = str(timedelta(seconds=int(remaining)))
-            self.eta_label.config(text="{}: {}".format(self.sm.get_text('eta'), eta_str))
-        elif total <= 0:
-            self.eta_label.config(text="")
+        self._refresh_eta_label()
 
         if test_name:
             self.current_test_label.config(text=test_name)
@@ -2013,8 +2181,17 @@ class ModernBenchmarkGUI(object):
         if self.is_running:
             return
 
+        self._eta_unit_samples = defaultdict(lambda: deque(maxlen=5))
+        self._eta_family_samples = defaultdict(lambda: deque(maxlen=8))
+        self._eta_overall_samples = deque(maxlen=12)
+        self._eta_active_unit_name = None
+        self._eta_active_unit_started_at = None
+        self._eta_last_heartbeat_elapsed = 0.0
+        self._selected_scales_for_run = []
+
         # Get selected scales
         selected_scales = self._get_selected_scales()
+        self._selected_scales_for_run = list(selected_scales)
         selected_scale_text = ", ".join(selected_scales)
 
         # Log the test parameters
@@ -2118,6 +2295,9 @@ class ModernBenchmarkGUI(object):
             if self.os_var.get() and self.os_available:
                 self._run_python_benchmark(py3_path, scale, 'os', scale_output_dir)
 
+        if not self.should_stop:
+            self._generate_comparison_report(scale_output_dir, scale_output_dir, report_label=scale)
+
     def _run_python_benchmark(self, python_path, scale, test_type, output_dir=None):
         """运行Python基准测试"""
         if self.should_stop:
@@ -2166,7 +2346,7 @@ class ModernBenchmarkGUI(object):
             except Exception:
                 pass
         self.root.after(0, lambda: self._log("Running: {}".format(' '.join(display_cmd)), "CMD"))
-        self.root.after(0, lambda: self._advance_progress(1))
+        self.root.after(0, lambda: self._advance_progress(1, eta_name='__setup__'))
 
         try:
             # Set working directory to script location
@@ -2195,12 +2375,13 @@ class ModernBenchmarkGUI(object):
                     break
                 decoded_line = line.strip()
                 if decoded_line:
-                    if ('正在执行:' in decoded_line or
-                            'Running multiprocess comparison:' in decoded_line):
-                        self.root.after(0, lambda: self._advance_progress(1))
+                    unit_name = self._extract_progress_unit_name(decoded_line)
+                    if unit_name:
+                        self.root.after(0, lambda n=unit_name: self._advance_progress(1, eta_name=n))
                     self.root.after(0, lambda l=decoded_line: self._log(l))
 
             process.wait()
+            self.root.after(0, self._eta_finalize_current_unit)
 
             if process.returncode == 0:
                 self.root.after(0, lambda: self._log("Completed: {}".format(test_name), "SUCCESS"))
@@ -2220,6 +2401,7 @@ class ModernBenchmarkGUI(object):
 
         self.should_stop = True
         self._log("Stopping...", "WARNING")
+        self._eta_finalize_current_unit()
 
         if self.current_process:
             try:
@@ -2232,6 +2414,7 @@ class ModernBenchmarkGUI(object):
         self.is_running = False
         self.current_process = None
         self.test_queue = []
+        self._eta_finalize_current_unit()
 
         # Reset UI
         self.run_btn.config(state='normal')
@@ -2247,25 +2430,26 @@ class ModernBenchmarkGUI(object):
         self._log("All tests completed in {:.1f}s".format(elapsed), "SUCCESS")
         self._log("", "INFO")
 
-        # 生成对比报告
-        if len(self.test_queue) <= 1:
-            self._generate_comparison_report()
-        else:
-            self._log("Multiple scales selected; per-scale reports are already saved in each scale folder.", "INFO")
-            for scale in self.test_queue:
+        selected_scales = getattr(self, '_selected_scales_for_run', [])
+        if selected_scales:
+            self._log("Per-scale reports saved in each scale folder:", "INFO")
+            for scale in selected_scales:
                 self._log("  {}".format(os.path.join(self.current_output_dir, scale)), "INFO")
+        else:
+            self._log("No scale selection was recorded for this run.", "WARNING")
 
-    def _generate_comparison_report(self):
+    def _generate_comparison_report(self, results_dir=None, output_dir=None, report_label=None):
         """生成对比报告"""
-        self._log("Generating comparison report...", "INFO")
+        label = report_label or "current"
+        self._log("Generating comparison report for {}...".format(label), "INFO")
         try:
             py3_path = self.py3_var.get() if hasattr(self, 'py3_var') else self.sm.get('python_paths.python3', 'python')
 
-            results_dir = getattr(self, 'current_output_dir', None)
+            results_dir = results_dir or getattr(self, 'current_output_dir', None)
             if not results_dir:
                 results_dir = os.path.join('results')
             results_dir = os.path.abspath(results_dir)
-            output_dir = results_dir
+            output_dir = os.path.abspath(output_dir or results_dir)
 
             raw_root = os.path.join(results_dir, 'data')
             search_root = raw_root if os.path.isdir(raw_root) else results_dir
@@ -2320,14 +2504,14 @@ class ModernBenchmarkGUI(object):
             process.wait()
 
             if process.returncode == 0:
-                self._log("Comparison report generated successfully!", "SUCCESS")
+                self._log("Comparison report generated successfully for {}!".format(label), "SUCCESS")
             else:
                 self._log("Failed to generate comparison report (code: {})".format(process.returncode), "ERROR")
 
         except Exception as e:
             self._log("Error generating report: {}".format(str(e)), "ERROR")
 
-        output_base = os.path.abspath(getattr(self, 'current_output_dir', os.path.join('results')))
+        output_base = os.path.abspath(output_dir or getattr(self, 'current_output_dir', os.path.join('results')))
         comparison_path = os.path.join(output_base, 'comparison_report.md')
         comparison_csv = os.path.join(output_base, 'comparison_data.csv')
         comparison_json = os.path.join(output_base, 'comparison_data.json')

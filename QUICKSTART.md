@@ -1,209 +1,116 @@
 # 快速开始指南
 
-## 推荐使用图形界面
+> 面向 `v1.0.0`
 
-最简单的方式是使用图形界面：
+## 最短路径
+
+### 1. 启动 GUI
+
+推荐直接双击：
+
+```text
+启动工具.vbs
+```
+
+也可以使用：
 
 ```bash
-# 双击启动（Windows）
-launch_gui.bat
-
-# 或使用 Python 启动
 python launch_gui.py
 ```
 
-然后按照界面上的 1→2→3→4→5 步骤点击执行即可。
+### 2. 选择测试参数
 
----
+- 先确认 Python 2.7 与 Python 3.x 路径可用。
+- 勾选一个或多个数据规模：`tiny / small / standard / medium / large`。
+- 按需启用“多进程”与“开源库”。
 
-## 命令行方式（备选）
+### 3. 开始测试
 
-如果 GUI 无法使用，可以使用命令行：
+- 点击“开始测试”。
+- 查看进度条、ETA 和日志输出。
+- 测试完成后点击“打开生成结果文件夹”。
 
-### 1. 验证环境
+## 结果在哪里
+
+默认输出路径：
+
+```text
+C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\
+```
+
+每个规模目录下都会生成：
+
+- `comparison_report.md`
+- `comparison_table.tex`
+- `comparison_data.csv`
+- `comparison_data.json`
+- `data\py2`
+- `data\py3`
+- `data\os`
+
+如果一次勾选多个规模，会在同一时间戳目录下并列生成多个规模文件夹。
+
+## 命令行方式
+
+### 环境验证
 
 ```bash
-# Python 2.7
 C:\Python27\ArcGIS10.8\python.exe test_setup.py
-
-# Python 3.x
 "C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" test_setup.py
 ```
 
-### 2. 运行完整测试流程
+### 手动跑双版本
 
 ```bash
-# 步骤1：使用 Python 2.7 生成数据并运行测试
 C:\Python27\ArcGIS10.8\python.exe run_benchmarks.py --scale medium
-
-# 步骤2：使用 Python 3.x 运行测试（使用已生成的数据）
 "C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" run_benchmarks.py --scale medium
-
-# 步骤3：分析结果（使用任一 Python 版本）
-python analyze_results.py
+python analyze_results.py --results-dir C:\temp\arcgis_benchmark_data\<时间戳>\<规模> --output-dir C:\temp\arcgis_benchmark_data\<时间戳>\<规模>
 ```
 
-### 3. 包含开源库对比（Python 3.x 环境）
+### 自动连续跑双版本
 
 ```bash
-# 确保已安装开源库
-"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" -m pip install geopandas rasterio shapely pyogrio
+python scripts\run_both_versions.py
+```
 
-# 运行测试（包含开源对比）
+### 启用开源库对比
+
+```bash
+"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" -m pip install geopandas rasterio shapely pyogrio numpy
 "C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" run_benchmarks.py --scale medium --opensource
 ```
 
-### 4. 自动运行两个版本
+## 常用参数
 
 ```bash
-python run_both_versions.py
+python run_benchmarks.py --scale medium
+python run_benchmarks.py --scale medium --opensource
+python run_benchmarks.py --scale medium --multiprocess --mp-workers 4
+python run_benchmarks.py --category vector --scale small
+python run_benchmarks.py --scale medium --generate-data
 ```
 
----
+## 常见问题
 
-## 查看结果
+### GUI 启动失败
 
-分析完成后，查看生成的报告：
+- 检查 ArcGIS Pro 或 ArcGIS Desktop 是否已安装。
+- 改用 `python launch_gui.py` 查看是否有报错。
 
-```bash
-# Markdown 报告（可直接在浏览器或 Markdown 编辑器中查看）
-C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\comparison_report.md
+### `arcpy` 不可用
 
-# LaTeX 表格（可直接插入论文）
-C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\comparison_table.tex
+- 必须使用 ArcGIS 自带 Python 解释器运行。
 
-# CSV 数据（可用 Excel 打开）
-C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\comparison_data.csv
-```
+### 开源库未安装
 
----
+- 在 GUI 中点击“安装开源库”。
+- 或手动运行上面的 `pip install` 命令。
 
-## 调整测试设置
+### 文件锁定
 
-### 数据规模
+- 关闭 ArcMap、ArcGIS Pro 和相关属性表窗口。
+- 删除 `C:\temp\arcgis_benchmark_data` 下对应目录后重试。
 
-在 GUI 界面的「测试设置」区域选择数据规模：
+### 内存不足
 
-| 规模 | 名称 | 预计时间 | 适用场景 |
-|------|------|----------|----------|
-| tiny | 超小 | 1-2分钟 | 快速验证/调试 |
-| small | 小型 | 5-10分钟 | 功能测试 |
-| standard | 标准 | 15-30分钟 | 日常测试 |
-| medium | 中型 | 30-60分钟 | 性能对比（推荐）|
-| large | 大型 | 2-4小时 | 学术研究 |
-
-### 命令行参数
-
-```bash
-# 指定数据规模
-run_benchmarks.py --scale medium
-
-# 增加测试次数（提高统计可靠性）
-run_benchmarks.py --scale medium --runs 5 --warmup 2
-
-# 启用多进程对比
-run_benchmarks.py --scale medium --multiprocess --mp-workers 4
-
-# 启用开源库对比
-run_benchmarks.py --scale medium --opensource
-
-# 完整参数
-run_benchmarks.py --scale medium --runs 3 --warmup 1 --opensource --multiprocess --mp-workers 4
-```
-
-### 手动编辑配置
-
-编辑 `config/settings.py`：
-
-```python
-# 数据规模（tiny/small/standard/medium/large）
-DATA_SCALE = 'medium'
-
-# 循环次数
-TEST_RUNS = 3
-
-# 预热次数
-WARMUP_RUNS = 0
-```
-
----
-
-## 常用命令
-
-```bash
-# 仅运行矢量测试
-run_benchmarks.py --category vector --scale medium
-
-# 仅运行栅格测试
-run_benchmarks.py --category raster --scale medium
-
-# 仅运行开源测试
-run_benchmarks.py --category all --scale medium --opensource
-
-# 指定输出目录
-run_benchmarks.py --scale medium --output-dir D:\benchmark_results
-
-# 强制重新生成测试数据
-run_benchmarks.py --scale medium --generate-data
-```
-
----
-
-## 故障排除
-
-### GUI 无法启动
-
-1. 检查是否安装了 ArcGIS Pro（推荐）或 ArcGIS Desktop
-2. 尝试使用命令行方式运行
-3. 检查 Python 路径是否正确
-
-### 问题：arcpy 不可用
-**解决**：确保使用 ArcGIS 自带的 Python 解释器运行脚本
-
-### 问题：开源库未找到
-**解决**：
-```bash
-# 安装开源依赖
-"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" -m pip install geopandas rasterio shapely pyogrio numpy
-```
-
-### 问题：内存不足
-**解决**：在 GUI 或命令行中选择更小的数据规模（tiny 或 small）
-
-### 问题：许可错误
-**解决**：确保 ArcGIS 许可为 Advanced 级别
-
-### 问题：结果文件未生成
-**解决**：检查输出根目录是否有写入权限
-
-### 问题：文件锁定（File Lock）
-**解决**：
-1. 关闭所有 ArcGIS 程序（ArcMap、ArcGIS Pro）
-2. 手动删除 `C:\temp\arcgis_benchmark_data` 目录
-3. 重新运行测试
-
----
-
-## 论文写作建议
-
-1. **方法部分**：描述测试环境、数据规模、测试项目
-2. **结果部分**：使用生成的表格和图表
-3. **讨论部分**：分析 Python 3.x 性能优势的原因
-
-生成的 LaTeX 表格示例：
-
-```latex
-\begin{table}[htbp]
-\centering
-\caption{ArcGIS Python 性能对比}
-\input{<输出根目录>/comparison_table.tex}
-\end{table}
-```
-
-三向对比结果示例：
-```
-测试项目          | Python 2.7 | Python 3.x | 开源库 | Py3加速 | OS加速
-------------------|------------|------------|--------|---------|--------
-CreateFishnet     | 0.998s     | 1.040s     | 0.161s | 0.96x   | 6.20x
-RasterResample    | 0.550s     | 1.261s     | 0.021s | 0.44x   | 26.4x
-```
+- 改用 `tiny` 或 `small` 规模。

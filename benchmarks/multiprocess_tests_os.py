@@ -31,6 +31,20 @@ from benchmarks.base_benchmark import BaseBenchmark
 from utils.timer import ProgressHeartbeat
 
 
+BUFFER_PROJECTED_CRS = "EPSG:3857"
+
+
+def buffer_in_projected_crs(gdf, buffer_distance_meters, projected_crs=BUFFER_PROJECTED_CRS):
+    """Buffer geometries in a projected CRS and return to the source CRS."""
+    source_crs = gdf.crs
+    if source_crs is None:
+        raise RuntimeError("Input GeoDataFrame must define a CRS for buffer benchmarking")
+
+    projected = gdf.to_crs(projected_crs)
+    projected['geometry'] = projected.buffer(buffer_distance_meters)
+    return projected.to_crs(source_crs)
+
+
 def create_fishnet_chunk(args):
     """Worker function for creating fishnet chunk"""
     start_row, end_row, cols, cell_width, cell_height = args
@@ -46,11 +60,11 @@ def create_fishnet_chunk(args):
     return polygons
 
 
-def buffer_features_chunk(features_chunk, buffer_distance=1.0):
+def buffer_features_chunk(args):
     """Worker function for buffer operation on chunk"""
+    features_chunk, buffer_distance, projected_crs = args
     gdf_chunk = features_chunk.copy()
-    gdf_chunk['geometry'] = gdf_chunk.buffer(buffer_distance)
-    return gdf_chunk
+    return buffer_in_projected_crs(gdf_chunk, buffer_distance, projected_crs)
 
 
 def generate_points_chunk(args):
@@ -357,7 +371,7 @@ class MP_V3_Buffer_OS(MultiprocessBenchmarkOS):
         self.gdb_path = None
         self.input_layer = None
         self.output_path = None
-        self.buffer_distance = 1.0
+        self.buffer_distance = 1000.0
     
     def setup(self):
         self.gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
@@ -373,7 +387,7 @@ class MP_V3_Buffer_OS(MultiprocessBenchmarkOS):
     
     def run_single(self):
         gdf = gpd.read_file(self.gdb_path, layer=self.input_layer)
-        gdf['geometry'] = gdf.buffer(self.buffer_distance)
+        gdf = buffer_in_projected_crs(gdf, self.buffer_distance)
         gdf.to_file(self.output_path, driver="GPKG")
         return {'features_created': len(gdf), 'mode': 'single'}
     
@@ -390,8 +404,14 @@ class MP_V3_Buffer_OS(MultiprocessBenchmarkOS):
             chunks.append(gdf.iloc[start:end].copy())
         
         # Process in parallel
+        args_list = [
+            (chunk, self.buffer_distance, BUFFER_PROJECTED_CRS)
+            for chunk in chunks
+            if len(chunk) > 0
+        ]
+
         with mp.Pool(processes=num_workers) as pool:
-            results = pool.map(partial(buffer_features_chunk, buffer_distance=self.buffer_distance), chunks)
+            results = pool.map(buffer_features_chunk, args_list)
         
         # Combine results
         import pandas as pd

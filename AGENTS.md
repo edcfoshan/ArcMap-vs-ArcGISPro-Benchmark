@@ -8,7 +8,7 @@
 
 - **性能基准测试**: 涵盖矢量数据、栅格数据、混合操作共12项测试
 - **双版本对比**: 自动对比 Python 2.7 和 Python 3.x 的执行效率
-- **图形界面**: 提供一键式全自动测试的 GUI
+- **图形界面**: 提供现代 GUI，支持多规模勾选与一键运行
 - **报告生成**: 自动生成 Markdown、LaTeX、CSV、JSON 格式的报告
 
 ### 系统要求
@@ -27,7 +27,8 @@
 ├── run_benchmarks.py         # 命令行基准测试执行器
 ├── analyze_results.py        # 结果分析与报告生成器
 ├── launch_gui.py             # GUI 启动器
-├── launch_gui.bat            # Windows 批处理启动（无黑窗口）
+├── launch_gui.bat            # Windows 批处理兼容启动
+├── 启动工具.vbs             # 推荐：无黑窗口启动 GUI
 ├── test_setup.py             # 环境测试脚本
 ├── config/
 │   └── settings.py           # 全局配置（数据规模、循环次数等）
@@ -50,7 +51,7 @@
 │   ├── data\py2              # Python 2.7 原始结果与数据
 │   ├── data\py3              # Python 3.x 原始结果与数据
 │   ├── data\os               # 开源库原始结果与数据
-│   └── comparison_report.md  # 根目录报告文件
+│   └── comparison_report.md  # 当前规模目录根部报告文件
 └── *.md                      # 各类文档
 ```
 
@@ -80,9 +81,9 @@
 ### 数据规模配置 (`config/settings.py`)
 
 ```python
-DATA_SCALE = 'tiny'  # 可选: 'tiny', 'small', 'medium', 'large'
-TEST_RUNS = 2        # 正式测试循环次数
-WARMUP_RUNS = 0      # 预热次数（不计入结果）
+DATA_SCALE = 'tiny'  # 可选: 'tiny', 'small', 'standard', 'medium', 'large'
+TEST_RUNS = 3        # 正式测试循环次数
+WARMUP_RUNS = 1      # 预热次数（不计入结果）
 ```
 
 | 规模 | 预计时间 | 磁盘需求 | 适用场景 |
@@ -97,7 +98,10 @@ WARMUP_RUNS = 0      # 预热次数（不计入结果）
 ### 1. 图形界面方式（推荐）
 
 ```bash
-# 双击启动（无黑窗口）
+# 双击启动（无黑窗口，推荐）
+启动工具.vbs
+
+# 兼容方式
 launch_gui.bat
 
 # 或使用 Python 启动
