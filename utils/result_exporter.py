@@ -8,27 +8,37 @@ import json
 import os
 import sys
 import csv
+import tempfile
 from datetime import datetime
 
 # Python 2/3 compatibility for file open
 import io
 
+if sys.version_info[0] >= 3:
+    text_type = str
+    binary_types = (bytes, bytearray)
+    integer_types = (int,)
+else:
+    text_type = unicode  # noqa: F821 - Python 2 compatibility
+    binary_types = (str,)
+    integer_types = (int, long)  # noqa: F821 - Python 2 compatibility
+
 def open_text_file(filepath, mode):
     """Open file with UTF-8 encoding for both Python 2 and 3"""
     if sys.version_info[0] >= 3:
-        return io.open(filepath, mode, encoding='utf-8', newline='')
+        return io.open(filepath, mode, encoding='utf-8', newline='', errors='replace')
     else:
-        return io.open(filepath, mode, encoding='utf-8')
+        return io.open(filepath, mode, encoding='utf-8', errors='replace')
 
 def open_csv_file(filepath, mode):
     """Open CSV file with proper encoding"""
     # CSV module needs different handling in Python 2
     if sys.version_info[0] >= 3:
-        return io.open(filepath, mode, encoding='utf-8', newline='')
+        return io.open(filepath, mode, encoding='utf-8', newline='', errors='replace')
     else:
         # Python 2: use binary mode for csv module
         import codecs
-        return codecs.open(filepath, mode, encoding='utf-8')
+        return codecs.open(filepath, mode, encoding='utf-8', errors='replace')
 
 class ResultExporter(object):
     """
@@ -38,6 +48,116 @@ class ResultExporter(object):
         self.output_dir = output_dir
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
+
+    def _decode_bytes(self, value):
+        """Decode byte strings using a small fallback chain."""
+        if not isinstance(value, binary_types):
+            return value
+
+        encodings = ['utf-8', 'gbk', 'gb2312', 'cp936', 'latin-1']
+        for encoding in encodings:
+            try:
+                return value.decode(encoding)
+            except Exception:
+                pass
+
+        return value.decode('utf-8', 'replace')
+
+    def _safe_text(self, value):
+        """Convert any scalar value into a safe text string."""
+        if value is None:
+            return ''
+
+        if isinstance(value, text_type):
+            return value
+
+        if isinstance(value, binary_types):
+            return self._decode_bytes(value)
+
+        try:
+            return text_type(value)
+        except Exception:
+            try:
+                return text_type(repr(value))
+            except Exception:
+                return text_type('<unprintable>')
+
+    def _normalize_json_value(self, value):
+        """Recursively normalize values so json.dump can always serialize them."""
+        if value is None:
+            return None
+
+        if isinstance(value, bool):
+            return value
+
+        if isinstance(value, integer_types):
+            return value
+
+        if isinstance(value, float):
+            return value
+
+        if isinstance(value, text_type):
+            return value
+
+        if isinstance(value, binary_types):
+            return self._decode_bytes(value)
+
+        if isinstance(value, dict):
+            normalized = {}
+            for key, item in value.items():
+                if isinstance(key, (bool,) + integer_types):
+                    json_key = key
+                elif isinstance(key, float):
+                    json_key = self._safe_text(key)
+                else:
+                    json_key = self._safe_text(key)
+                normalized[json_key] = self._normalize_json_value(item)
+            return normalized
+
+        if isinstance(value, (list, tuple, set)):
+            return [self._normalize_json_value(item) for item in value]
+
+        if isinstance(value, datetime):
+            return value.isoformat()
+
+        if hasattr(value, 'isoformat'):
+            try:
+                return value.isoformat()
+            except Exception:
+                pass
+
+        return self._safe_text(value)
+
+    def _normalize_json_payload(self, payload):
+        """Normalize the full export payload before serialization."""
+        return self._normalize_json_value(payload)
+
+    def _write_text_atomic(self, filepath, content):
+        """Write text content to a temporary file and replace the target atomically."""
+        directory = os.path.dirname(filepath) or '.'
+        fd, temp_path = tempfile.mkstemp(
+            prefix=os.path.basename(filepath) + '.',
+            suffix='.tmp',
+            dir=directory
+        )
+        os.close(fd)
+
+        try:
+            with open_text_file(temp_path, 'w') as f:
+                f.write(content)
+
+            if sys.version_info[0] >= 3:
+                os.replace(temp_path, filepath)
+            else:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                os.rename(temp_path, filepath)
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
     
     def export_json(self, results, filename, metadata=None):
         """Export results to JSON file"""
@@ -54,9 +174,10 @@ class ResultExporter(object):
             'metadata': metadata or {},
             'results': results
         }
-        
-        with open_text_file(filepath, 'w') as f:
-            json.dump(export_data, f, indent=2, ensure_ascii=False)
+
+        normalized_data = self._normalize_json_payload(export_data)
+        json_content = json.dumps(normalized_data, indent=2, ensure_ascii=False)
+        self._write_text_atomic(filepath, json_content)
         
         return filepath
     
@@ -75,8 +196,14 @@ class ResultExporter(object):
         
         # Get all possible fieldnames from all results (not just first)
         all_fields = set()
+        normalized_rows = []
         for row in flat_results:
-            all_fields.update(row.keys())
+            normalized_row = {}
+            for key, value in row.items():
+                safe_key = self._safe_text(key)
+                normalized_row[safe_key] = self._safe_text(value)
+                all_fields.add(safe_key)
+            normalized_rows.append(normalized_row)
         fieldnames = sorted(list(all_fields))
         
         # Use compatible file open
@@ -84,7 +211,7 @@ class ResultExporter(object):
             with open_csv_file(filepath, 'w') as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
-                writer.writerows(flat_results)
+                writer.writerows(normalized_rows)
         else:
             # Python 2: encode to UTF-8 manually
             import codecs
@@ -92,16 +219,10 @@ class ResultExporter(object):
                 # Write header
                 f.write(','.join(fieldnames) + '\n')
                 # Write rows
-                for row in flat_results:
+                for row in normalized_rows:
                     values = []
                     for key in fieldnames:
                         val = row.get(key, '')
-                        if isinstance(val, unicode):
-                            val = val.encode('utf-8')
-                        elif not isinstance(val, basestring):
-                            val = str(val)
-                        else:
-                            val = val.encode('utf-8')
                         # Escape quotes and wrap in quotes if needed
                         if ',' in val or '"' in val or '\n' in val:
                             val = '"' + val.replace('"', '""') + '"'
@@ -126,9 +247,9 @@ class ResultExporter(object):
         # Detailed results
         lines.append("## Detailed Results\n")
         for result in results:
-            lines.append("### {}\n".format(result.get('test_name', 'Unknown')))
+            lines.append("### {}\n".format(self._safe_text(result.get('test_name', 'Unknown'))))
             for key, value in sorted(result.items()):
-                lines.append("- **{}**: {}".format(key, value))
+                lines.append("- **{}**: {}".format(self._safe_text(key), self._safe_text(value)))
             lines.append("")
         
         content = '\n'.join(lines)
@@ -176,7 +297,7 @@ class ResultExporter(object):
                             val = "{:.4f}".format(val)
                         elif col == 'speedup':
                             val = "{:.2f}x".format(val)
-                    row_values.append(str(val))
+                    row_values.append(self._safe_text(val))
                 lines.append(" & ".join(row_values) + " \\\\")
             
             lines.append("\\hline")
@@ -265,7 +386,7 @@ class ResultExporter(object):
         """Format a cell value for display"""
         if isinstance(value, float):
             return "{:.4f}".format(value)
-        return str(value)
+        return self._safe_text(value)
     
     def _create_comparison(self, results_py2, results_py3):
         """Create comparison between Python 2 and 3 results"""
