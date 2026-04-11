@@ -151,15 +151,6 @@ class MultiprocessBenchmark(BaseBenchmark):
         self.temp_outputs = []
         self._temp_dir = None
     
-    def __del__(self):
-        """Destructor to ensure cleanup of temporary files"""
-        try:
-            self.cleanup_temp_files()
-            if self._temp_dir and os.path.exists(self._temp_dir):
-                shutil.rmtree(self._temp_dir, ignore_errors=True)
-        except:
-            pass
-    
     def run_single(self):
         """Single process version - must be implemented by subclass"""
         raise NotImplementedError("Subclasses must implement run_single()")
@@ -195,13 +186,13 @@ class MultiprocessBenchmark(BaseBenchmark):
         print("\n  [{}] {} 初始化测试: {}".format(py_version, mp_label, self.name))
         print("  类别: {}".format(self.category))
         
-        # Setup
-        print("  执行 setup()...")
-        with ProgressHeartbeat("{} setup()".format(self.name)):
-            self.setup()
-        print("  [OK] setup() 完成")
-        
         try:
+            # Setup
+            print("  执行 setup()...")
+            with ProgressHeartbeat("{} setup()".format(self.name)):
+                self.setup()
+            print("  [OK] setup() 完成")
+
             # Warmup runs (single process for warmup)
             if warmup_runs > 0:
                 print("  预热运行 ({} 次，单进程)...".format(warmup_runs))
@@ -243,6 +234,7 @@ class MultiprocessBenchmark(BaseBenchmark):
                     print("      [FAILED] {}".format(result.get('error', 'Unknown error')))
         
         finally:
+            self.cleanup_temp_files()
             # Teardown
             print("  执行 teardown()...")
             with ProgressHeartbeat("{} teardown()".format(self.name)):

@@ -4,6 +4,8 @@
 
 本说明面向 `v1.0.0` GUI 打包。仓库当前没有内置 `create_exe.py` 或 `convert_icon.py`，建议直接使用 `PyInstaller` 或 `auto-py-to-exe`。
 
+> 说明：这里的 EXE 仅负责桌面 GUI，本仓库新增的中文验证网页 `verification_console/` 仍然是独立浏览器页面，不属于 EXE 打包主目标。
+
 ## 方法一：PyInstaller（推荐）
 
 ### 1. 安装依赖
@@ -73,6 +75,7 @@ auto-py-to-exe
 2. GUI 中 Python 路径可手动选择。
 3. `tiny` 规模测试能够跑通。
 4. 结果目录与报告文件能正常生成。
+5. 运行目录里能看到 `benchmark_run.log` 与 `benchmark_manifest.json`。
 
 ## 注意事项
 

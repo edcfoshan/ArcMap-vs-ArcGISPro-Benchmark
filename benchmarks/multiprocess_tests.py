@@ -21,6 +21,7 @@ except ImportError:
     arcpy = None
 from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
+from utils.gis_cleanup import clear_workspace_cache, remove_dataset_artifacts
 from utils.timer import ProgressHeartbeat
 from utils.raster_utils import create_constant_raster
 
@@ -48,13 +49,13 @@ class MultiprocessBenchmark(BaseBenchmark):
         
         print("  类别: %s" % self.category)
         
-        # Setup
-        print("  执行 setup()...")
-        with ProgressHeartbeat("{} setup()".format(self.name)):
-            self.setup()
-        print("  [OK] setup() 完成")
-        
         try:
+            # Setup
+            print("  执行 setup()...")
+            with ProgressHeartbeat("{} setup()".format(self.name)):
+                self.setup()
+            print("  [OK] setup() 完成")
+
             # Warmup runs
             if warmup_runs > 0:
                 print("  预热运行 (%d 次)..." % warmup_runs)
@@ -86,8 +87,11 @@ class MultiprocessBenchmark(BaseBenchmark):
         finally:
             # Teardown
             print("  执行 teardown()...")
-            with ProgressHeartbeat("{} teardown()".format(self.name)):
-                self.teardown()
+            try:
+                with ProgressHeartbeat("{} teardown()".format(self.name)):
+                    self.teardown()
+            finally:
+                clear_workspace_cache(settings.DATA_DIR)
             print("  [OK] teardown() 完成")
         
         return self.get_statistics()
@@ -118,6 +122,7 @@ class MultiprocessBenchmark(BaseBenchmark):
         
         timing_results = bt.get_results()
         result.update(timing_results)
+        clear_workspace_cache(settings.DATA_DIR)
         return result
     
     def run_single(self):
@@ -140,9 +145,7 @@ class MultiprocessBenchmark(BaseBenchmark):
         if not path:
             return
         try:
-            if arcpy and arcpy.Exists(path):
-                arcpy.Delete_management(path)
-                return
+            remove_dataset_artifacts(path)
         except Exception:
             pass
         try:
@@ -156,13 +159,17 @@ class MultiprocessBenchmark(BaseBenchmark):
     def _create_run_gdb(self, workspace, gdb_name):
         """Create a temporary file geodatabase inside a workspace."""
         gdb_path = os.path.join(workspace, gdb_name)
-        if arcpy and arcpy.Exists(gdb_path):
+        last_error = None
+        for _attempt in range(3):
             try:
-                arcpy.Delete_management(gdb_path)
-            except Exception:
-                pass
-        arcpy.CreateFileGDB_management(workspace, gdb_name)
-        return gdb_path
+                clear_workspace_cache()
+                remove_dataset_artifacts(gdb_path)
+                arcpy.CreateFileGDB_management(workspace, gdb_name)
+                return gdb_path
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.5)
+        raise RuntimeError("Failed to create temporary GDB {}: {}".format(gdb_path, last_error))
 
 
 class MP_V1_CreateFishnet(MultiprocessBenchmark):
@@ -170,8 +177,9 @@ class MP_V1_CreateFishnet(MultiprocessBenchmark):
     
     def __init__(self):
         super(MP_V1_CreateFishnet, self).__init__("MP_V1_CreateFishnet", "vector_multiprocess")
-        self.rows = settings.VECTOR_CONFIG['fishnet_rows']
-        self.cols = settings.VECTOR_CONFIG['fishnet_cols']
+        cfg = settings.get_vector_config_for_test('V1')
+        self.rows = cfg['fishnet_rows']
+        self.cols = cfg['fishnet_cols']
         self.output_fc = None
         self.temp_dir = None
     
@@ -208,13 +216,6 @@ class MP_V1_CreateFishnet(MultiprocessBenchmark):
                             shutil.rmtree(item_path, ignore_errors=True)
                     except:
                         pass
-        except:
-            pass
-    
-    def __del__(self):
-        """Ensure cleanup even if test crashes"""
-        try:
-            self.teardown()
         except:
             pass
     
@@ -338,7 +339,8 @@ class MP_V2_CreateRandomPoints(MultiprocessBenchmark):
     
     def __init__(self):
         super(MP_V2_CreateRandomPoints, self).__init__("MP_V2_CreateRandomPoints", "vector_multiprocess")
-        self.num_points = settings.VECTOR_CONFIG['random_points']
+        cfg = settings.get_vector_config_for_test('V2')
+        self.num_points = cfg['random_points']
         self.output_fc = None
         self.temp_dir = None
     
@@ -374,13 +376,6 @@ class MP_V2_CreateRandomPoints(MultiprocessBenchmark):
                             shutil.rmtree(item_path, ignore_errors=True)
                     except:
                         pass
-        except:
-            pass
-    
-    def __del__(self):
-        """Ensure cleanup even if test crashes"""
-        try:
-            self.teardown()
         except:
             pass
     
@@ -490,13 +485,6 @@ class MP_V3_Buffer(MultiprocessBenchmark):
                             shutil.rmtree(item_path, ignore_errors=True)
                     except:
                         pass
-        except:
-            pass
-    
-    def __del__(self):
-        """Ensure cleanup even if test crashes"""
-        try:
-            self.teardown()
         except:
             pass
     
@@ -629,13 +617,6 @@ class MP_V4_Intersect(MultiprocessBenchmark):
         except:
             pass
     
-    def __del__(self):
-        """Ensure cleanup even if test crashes"""
-        try:
-            self.teardown()
-        except:
-            pass
-    
     def run_single(self):
         if arcpy.Exists(self.output_fc):
             arcpy.Delete_management(self.output_fc)
@@ -726,7 +707,8 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
     
     def __init__(self):
         super(MP_R1_CreateConstantRaster, self).__init__("MP_R1_CreateConstantRaster", "raster_multiprocess")
-        self.size = settings.RASTER_CONFIG['constant_raster_size']
+        cfg = settings.get_raster_config_for_test('R1')
+        self.size = cfg['constant_raster_size']
         self.output_raster = None
         self.temp_dir = None
     
@@ -738,11 +720,8 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
     
     def teardown(self):
         """Clean up all temporary files and directories"""
-        if self.output_raster and arcpy.Exists(self.output_raster):
-            try:
-                arcpy.Delete_management(self.output_raster)
-            except Exception:
-                pass
+        if self.output_raster:
+            remove_dataset_artifacts(self.output_raster)
         
         if self.temp_dir and os.path.exists(self.temp_dir):
             try:
@@ -765,16 +744,8 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
         except:
             pass
     
-    def __del__(self):
-        """Ensure cleanup even if test crashes"""
-        try:
-            self.teardown()
-        except:
-            pass
-    
     def run_single(self):
-        if arcpy.Exists(self.output_raster):
-            arcpy.Delete_management(self.output_raster)
+        remove_dataset_artifacts(self.output_raster)
         
         cell_size = 360.0 / self.size
         extent = "-180 -90 180 90"
@@ -815,8 +786,7 @@ class MP_R1_CreateConstantRaster(MultiprocessBenchmark):
             raise RuntimeError("All partitions failed")
         
         # Mosaic
-        if arcpy.Exists(self.output_raster):
-            arcpy.Delete_management(self.output_raster)
+        remove_dataset_artifacts(self.output_raster)
         
         arcpy.MosaicToNewRaster_management(
             input_rasters=";".join(partition_rasters),

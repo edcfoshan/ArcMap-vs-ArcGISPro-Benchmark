@@ -1,5 +1,10 @@
 # 桌面软件窗口 vs 独立解释器 研究说明
 
+## 当前状态
+
+- 主流程已经统一输出 `benchmark_run.log` 和 `benchmark_manifest.json`，桌面窗口对比仅作为扩展研究补充。
+- 这份说明已和 `docs/DESKTOP_TEST_GUIDE.md`、`HANDOFF.md` 一起作为当前交接入口，后续优先维护这些文档。
+
 ## 这份文档讲什么
 
 本文件用于说明一个扩展研究方向：比较脚本在桌面软件窗口内执行，与在独立解释器中执行时的性能差异。
@@ -63,4 +68,4 @@
 ## 进一步参考
 
 - `docs/DESKTOP_TEST_GUIDE.md`：具体操作步骤。
-- `docs/RESEARCH_EXTENSION_SUMMARY.md`：扩展研究的价值与实施建议。
+- `HANDOFF.md`：当前进度与后续调参任务。

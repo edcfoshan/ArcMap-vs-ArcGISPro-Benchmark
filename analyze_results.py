@@ -42,9 +42,6 @@ def _get_scale_configs(scale_name):
         'medium': (settings.VECTOR_CONFIG_MEDIUM, settings.RASTER_CONFIG_MEDIUM),
         'large': (settings.VECTOR_CONFIG_LARGE, settings.RASTER_CONFIG_LARGE)
     }
-    stats['py3_faster'] = len([c for c in valid_two_way if c['faster'] == "Python 3.x 鏇村揩"])
-    stats['py2_faster'] = len([c for c in valid_two_way if c['faster'] == "Python 2.7 鏇村揩"])
-    stats['equal'] = len([c for c in valid_two_way if c['faster'] == "鎬ц兘鐩稿綋"])
 
     vector_config, raster_config = presets.get(
         (scale_name or '').lower(),
@@ -88,12 +85,40 @@ def _infer_total_runs(results):
     return sorted(count_freq.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
 
+def _load_report_manifest(results_dir, metadata_groups):
+    """Load the benchmark manifest from result metadata or from disk."""
+    metadata_groups = metadata_groups or {}
+    for group_name in ['py3', 'py2', 'os']:
+        group_metadata = metadata_groups.get(group_name) or {}
+        manifest = group_metadata.get('benchmark_manifest')
+        if isinstance(manifest, dict) and manifest:
+            return copy.deepcopy(manifest)
+
+    candidates = []
+    if results_dir:
+        candidates.append(results_dir)
+        candidates.append(_find_result_root(results_dir))
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            manifest = load_manifest(candidate, default={})
+        except Exception:
+            manifest = {}
+        if isinstance(manifest, dict) and manifest:
+            return copy.deepcopy(manifest)
+
+    return {}
+
+
 def _build_report_context(results_dir, metadata_groups, results_py2, results_py3, results_os):
     """Build report metadata from exported JSON metadata or on-disk inference"""
     metadata_groups = metadata_groups or {}
     py2_meta = metadata_groups.get('py2') or {}
     py3_meta = metadata_groups.get('py3') or {}
     os_meta = metadata_groups.get('os') or {}
+    manifest = _load_report_manifest(results_dir, metadata_groups)
 
     data_scale = (
         py3_meta.get('data_scale') or
@@ -115,6 +140,21 @@ def _build_report_context(results_dir, metadata_groups, results_py2, results_py3
     py2_runs = py2_meta.get('test_runs') or _infer_total_runs(results_py2) or settings.TEST_RUNS
     py3_runs = py3_meta.get('test_runs') or _infer_total_runs(results_py3) or settings.TEST_RUNS
     os_runs = os_meta.get('test_runs') or _infer_total_runs(results_os) or py3_runs
+    manifest_summary_text = (
+        py3_meta.get('benchmark_manifest_summary') or
+        py2_meta.get('benchmark_manifest_summary') or
+        os_meta.get('benchmark_manifest_summary') or
+        manifest_summary(manifest)
+    )
+    source_mode = (
+        manifest.get('source_mode') or
+        py3_meta.get('source_mode') or
+        py2_meta.get('source_mode') or
+        os_meta.get('source_mode') or
+        'synthetic'
+    )
+    osm_source = manifest.get('osm_source') or {}
+    results_root = _find_result_root(results_dir) if results_dir else results_dir
 
     return {
         'data_scale': str(data_scale).lower(),
@@ -122,7 +162,24 @@ def _build_report_context(results_dir, metadata_groups, results_py2, results_py3
         'raster_config': raster_config,
         'py2_runs': py2_runs,
         'py3_runs': py3_runs,
-        'os_runs': os_runs
+        'os_runs': os_runs,
+        'manifest': manifest,
+        'manifest_summary': manifest_summary_text,
+        'source_mode': str(source_mode).lower(),
+        'osm_source': osm_source,
+        'analysis_crs': manifest.get('analysis_crs', 3857),
+        'analysis_boundary_extent': manifest.get('analysis_boundary_extent') or {},
+        'analysis_raster_path': manifest.get('analysis_raster_path', ''),
+        'constant_raster_path': manifest.get('constant_raster_path', ''),
+        'benchmark_run_log': manifest.get(
+            'benchmark_run_log',
+            os.path.join(results_root or results_dir or '', getattr(settings, 'BENCHMARK_RUN_LOG_NAME', 'benchmark_run.log'))
+        ),
+        'benchmark_manifest_path': manifest.get(
+            'benchmark_manifest_path',
+            os.path.join(results_root or results_dir or '', getattr(settings, 'BENCHMARK_MANIFEST_NAME', 'benchmark_manifest.json'))
+        ),
+        'results_root': results_root or results_dir or ''
     }
 
 
@@ -192,6 +249,7 @@ def _find_latest_results_dir():
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import settings
+from utils.benchmark_manifest import load_manifest, manifest_summary
 from utils.result_exporter import ResultExporter
 
 
@@ -503,21 +561,21 @@ def calculate_statistics(comparison, has_os=False):
     """计算统计摘要（支持三向对比）"""
     valid_two_way = [c for c in comparison if c.get('py2_valid') and c.get('py3_valid')]
     valid_three_way = [c for c in comparison if c.get('py2_valid') and c.get('py3_valid') and c.get('os_valid')]
+    py3_faster = len([c for c in valid_two_way if c.get('speedup', 0) > 1.05])
+    py2_faster = len([c for c in valid_two_way if c.get('speedup', 0) < 0.95])
+    equal = len(valid_two_way) - py3_faster - py2_faster
     stats = {
         'total_tests': len(comparison),
         'valid_two_way_tests': len(valid_two_way),
         'invalid_two_way_tests': len(comparison) - len(valid_two_way),
-        'py3_faster': len([c for c in comparison if c['faster'] == "Python 3.x 更快"]),
-        'py2_faster': len([c for c in comparison if c['faster'] == "Python 2.7 更快"]),
-        'equal': len([c for c in comparison if c['faster'] == "性能相当"]),
+        'py3_faster': py3_faster,
+        'py2_faster': py2_faster,
+        'equal': equal,
         'average_speedup': 0,
         'median_speedup': 0,
         'max_speedup': 0,
         'min_speedup': 0
     }
-    stats['py3_faster'] = len([c for c in valid_two_way if c['faster'] == "Python 3.x 鏇村揩"])
-    stats['py2_faster'] = len([c for c in valid_two_way if c['faster'] == "Python 2.7 鏇村揩"])
-    stats['equal'] = len([c for c in valid_two_way if c['faster'] == "鎬ц兘鐩稿綋"])
 
     # 3-way statistics
     if has_os:
@@ -565,8 +623,10 @@ def get_system_info():
     # 尝试获取更详细的CPU信息
     try:
         if sys.platform == 'win32':
-            result = subprocess.check_output(['wmic', 'cpu', 'get', 'name', '/value'], 
-                                            stderr=subprocess.STDOUT, shell=True)
+            result = subprocess.check_output(
+                ['wmic', 'cpu', 'get', 'name', '/value'],
+                stderr=subprocess.STDOUT
+            )
             if sys.version_info[0] >= 3:
                 result = result.decode('utf-8', errors='ignore')
             for line in result.split('\n'):
@@ -585,8 +645,11 @@ def get_system_info():
         if sys.platform == 'win32':
             # 方法1：使用wmic
             try:
-                result = subprocess.check_output(['wmic', 'computerchip', 'get', 'capacity', '/value'],
-                                                stderr=subprocess.STDOUT, shell=True, timeout=5)
+                result = subprocess.check_output(
+                    ['wmic', 'memorychip', 'get', 'capacity', '/value'],
+                    stderr=subprocess.STDOUT,
+                    timeout=5
+                )
                 if sys.version_info[0] >= 3:
                     result = result.decode('utf-8', errors='ignore')
                 total_mem = 0
@@ -731,6 +794,20 @@ def generate_markdown_table(comparison, stats, results_py2=None, results_py3=Non
     py2_runs = report_context.get('py2_runs', settings.TEST_RUNS)
     py3_runs = report_context.get('py3_runs', settings.TEST_RUNS)
     os_runs = report_context.get('os_runs', py3_runs)
+    manifest = report_context.get('manifest') or {}
+    manifest_summary_text = report_context.get('manifest_summary') or manifest_summary(manifest)
+    source_mode = str(report_context.get('source_mode') or manifest.get('source_mode') or 'synthetic').lower()
+    osm_source = report_context.get('osm_source') or manifest.get('osm_source') or {}
+    analysis_extent = report_context.get('analysis_boundary_extent') or manifest.get('analysis_boundary_extent') or {}
+    analysis_crs = report_context.get('analysis_crs') or manifest.get('analysis_crs') or 3857
+    benchmark_run_log = report_context.get('benchmark_run_log') or os.path.join(
+        report_context.get('results_root') or '',
+        getattr(settings, 'BENCHMARK_RUN_LOG_NAME', 'benchmark_run.log')
+    )
+    benchmark_manifest_path = report_context.get('benchmark_manifest_path') or os.path.join(
+        report_context.get('results_root') or '',
+        getattr(settings, 'BENCHMARK_MANIFEST_NAME', 'benchmark_manifest.json')
+    )
     
     # 获取系统信息
     sys_info = get_system_info()
@@ -765,6 +842,31 @@ def generate_markdown_table(comparison, stats, results_py2=None, results_py3=Non
         lines.append("# ArcGIS Python 性能对比测试报告")
     lines.append("")
     lines.append("*生成时间：{}*".format(datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')))
+    lines.append("")
+
+    lines.append("## 0. 数据来源说明")
+    lines.append("")
+    lines.append("| 项目 | 内容 |")
+    lines.append("|------|------|")
+    lines.append("| 数据规模 | {} |".format(data_scale))
+    lines.append("| 来源模式 | {} |".format("OSM 真实样例" if source_mode == "osm" else "合成数据（降级）"))
+    lines.append("| OSM 区域 | {} |".format(osm_source.get('label', 'N/A')))
+    lines.append("| OSM 缓存版本 | {} |".format(osm_source.get('cache_version', 'N/A')))
+    lines.append("| OSM 缓存时间 | {} |".format(osm_source.get('cached_at', 'N/A')))
+    lines.append("| 数据源清单摘要 | {} |".format(manifest_summary_text or 'N/A'))
+    lines.append("| 分析 CRS | EPSG:{} |".format(analysis_crs))
+    if isinstance(analysis_extent, dict) and analysis_extent:
+        extent_text = "{xmin}, {ymin}, {xmax}, {ymax}".format(
+            xmin=analysis_extent.get('xmin', 'N/A'),
+            ymin=analysis_extent.get('ymin', 'N/A'),
+            xmax=analysis_extent.get('xmax', 'N/A'),
+            ymax=analysis_extent.get('ymax', 'N/A'),
+        )
+    else:
+        extent_text = 'N/A'
+    lines.append("| 边界范围 | {} |".format(extent_text))
+    lines.append("| 运行日志 | {} |".format(benchmark_run_log))
+    lines.append("| 清单文件 | {} |".format(benchmark_manifest_path))
     lines.append("")
     
     # ==================== 1. 执行摘要 ====================

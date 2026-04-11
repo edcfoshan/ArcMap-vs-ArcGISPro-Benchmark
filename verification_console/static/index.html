@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ArcGIS 基准测试验证控制台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="masthead">
+      <div class="masthead-copy">
+        <div class="eyebrow">本地验证控制台</div>
+        <h1>ArcGIS 基准测试调度器</h1>
+        <p class="lede">
+          通过浏览器统一驱动现有基准脚本，默认验证 tiny 与 small 两档，并同时检查开源库与多进程结果。
+        </p>
+      </div>
+      <div class="masthead-meta">
+        <div class="pill" id="job-status">空闲</div>
+        <div class="meta-line" id="server-summary">等待初始化</div>
+      </div>
+    </header>
+
+    <div class="banner">
+      快速预设会将正式循环数设为 1、预热数设为 0，适合先做一轮轻量验证。
+    </div>
+
+    <main class="layout">
+      <section class="panel controls">
+        <div class="panel-head">
+          <div>
+            <h2>运行设置</h2>
+            <p>这里控制的是命令行脚本，不会改动原有的桌面 GUI。</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" id="preset-first-three">默认两档</button>
+            <button type="button" class="ghost" id="preset-fast">快速预设</button>
+            <button type="button" class="ghost" id="refresh">刷新</button>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <label>
+            <span>Python 2 解释器</span>
+            <input id="python27-path" type="text" spellcheck="false">
+          </label>
+          <label>
+            <span>Python 3 解释器</span>
+            <input id="python3-path" type="text" spellcheck="false">
+          </label>
+          <label>
+            <span>输出根目录</span>
+            <input id="output-base-dir" type="text" spellcheck="false">
+          </label>
+          <label>
+            <span>正式循环次数</span>
+            <input id="runs" type="number" min="1" step="1">
+          </label>
+          <label>
+            <span>预热次数</span>
+            <input id="warmup" type="number" min="0" step="1">
+          </label>
+          <label>
+            <span>多进程 worker 数</span>
+            <input id="mp-workers" type="number" min="1" step="1">
+          </label>
+        </div>
+
+        <div class="scale-group">
+          <div class="group-label">选择规模</div>
+          <div class="scale-list" id="scale-list">
+            <label class="scale-item"><input type="checkbox" value="tiny" checked> tiny（推荐）</label>
+            <label class="scale-item"><input type="checkbox" value="small" checked> small（推荐）</label>
+            <label class="scale-item"><input type="checkbox" value="standard"> standard</label>
+            <label class="scale-item"><input type="checkbox" value="medium"> medium</label>
+            <label class="scale-item"><input type="checkbox" value="large"> large</label>
+          </div>
+        </div>
+
+        <div class="switch-row">
+          <label class="switch"><input id="generate-data" type="checkbox" checked><span>生成数据</span></label>
+          <label class="switch"><input id="include-opensource" type="checkbox" checked><span>包含开源库</span></label>
+          <label class="switch"><input id="multiprocess" type="checkbox" checked><span>多进程</span></label>
+        </div>
+
+        <div class="actions">
+          <button type="button" id="start">开始验证</button>
+          <button type="button" class="secondary" id="stop" disabled>停止</button>
+        </div>
+      </section>
+
+      <section class="panel status-panel">
+        <div class="panel-head">
+          <div>
+            <h2>状态</h2>
+            <p>实时查看每个规模的阶段、结果目录和校验进度。</p>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat">
+            <div class="stat-label">当前规模</div>
+            <div class="stat-value" id="current-scale">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">当前阶段</div>
+            <div class="stat-value" id="current-stage">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">会话根目录</div>
+            <div class="stat-value mono" id="session-root">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">进度</div>
+            <div class="stat-value" id="progress-text">0 / 0</div>
+          </div>
+        </div>
+
+        <div class="progress-shell">
+          <div class="progress-track">
+            <div id="progress-bar" class="progress-bar"></div>
+          </div>
+        </div>
+
+        <div class="substatus" id="substatus">就绪</div>
+
+        <table class="scale-table">
+          <thead>
+            <tr>
+              <th>规模</th>
+              <th>目录</th>
+              <th>Py2</th>
+              <th>Py3</th>
+              <th>开源库</th>
+              <th>分析</th>
+              <th>校验</th>
+            </tr>
+          </thead>
+          <tbody id="scale-table-body"></tbody>
+        </table>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-head">
+          <div>
+            <h2>实时日志</h2>
+            <p>调度器和脚本输出会按时间顺序显示在这里。</p>
+          </div>
+        </div>
+        <pre id="log-output" class="console"></pre>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

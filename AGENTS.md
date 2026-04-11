@@ -284,6 +284,8 @@ class VX_NewTest(BaseBenchmark):
 - `comparison_table.tex` - LaTeX 表格（可直接插入论文）
 - `comparison_data.csv` - CSV 数据（可用 Excel 分析）
 - `comparison_data.json` - JSON 原始数据
+- `benchmark_run.log` - 完整控制台日志镜像
+- `benchmark_manifest.json` - 输入来源、OSM 缓存与数据规模清单
 
 ## 扩展开发
 
@@ -300,6 +302,14 @@ class VX_NewTest(BaseBenchmark):
 在 `utils/arcgis_env.py` 的 `detect_arcgis_installations()` 中添加新路径。
 
 ## 更新记录
+
+### 2026-04-11 当前进度
+
+- `standard` 已收敛为按测试项单独调参，`tiny / small` 继续做快速验证层。
+- OSM 输入链路保持 `shp -> gdb -> benchmark`，预处理阶段已完成投影导入。
+- 独立中文验证网页默认只勾选 `tiny + small`，不改桌面 GUI。
+- 每次运行目录都会生成 `benchmark_run.log` 与 `benchmark_manifest.json`。
+- 当前交接文档集中在 `HANDOFF.md`、`README.md`、`QUICKSTART.md`。
 
 ### 2026-03-29 重要更新
 

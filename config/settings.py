@@ -26,13 +26,13 @@ WARMUP_RUNS = 1
 VECTOR_CONFIG_TINY = {
     'fishnet_rows': 50,
     'fishnet_cols': 50,
-    'random_points': 1000,
-    'buffer_points': 1000,
-    'intersect_features_a': 10000,
-    'intersect_features_b': 10000,
-    'spatial_join_points': 5000,
-    'spatial_join_polygons': 500,
-    'calculate_field_records': 10000,
+    'random_points': 5000,
+    'buffer_points': 5000,
+    'intersect_features_a': 20000,
+    'intersect_features_b': 20000,
+    'spatial_join_points': 10000,
+    'spatial_join_polygons': 1000,
+    'calculate_field_records': 20000,
 }
 
 RASTER_CONFIG_TINY = {
@@ -40,26 +40,32 @@ RASTER_CONFIG_TINY = {
     'resample_source_size': 500,
     'resample_target_size': 250,
     'clip_ratio': 0.5,
+    'analysis_raster_size': 600,
+    'analysis_raster_target_size': 300,
+    'analysis_raster_clip_ratio': 0.5,
 }
 
 # Small Scale (quick test for debugging)
 VECTOR_CONFIG_SMALL = {
-    'fishnet_rows': 125,
-    'fishnet_cols': 125,
-    'random_points': 12500,
-    'buffer_points': 12500,
-    'intersect_features_a': 125000,
-    'intersect_features_b': 125000,
-    'spatial_join_points': 62500,
-    'spatial_join_polygons': 1250,
-    'calculate_field_records': 125000,
+    'fishnet_rows': 100,
+    'fishnet_cols': 100,
+    'random_points': 10000,
+    'buffer_points': 10000,
+    'intersect_features_a': 40000,
+    'intersect_features_b': 40000,
+    'spatial_join_points': 20000,
+    'spatial_join_polygons': 2000,
+    'calculate_field_records': 40000,
 }
 
 RASTER_CONFIG_SMALL = {
-    'constant_raster_size': 1250,  # pixels (square)
-    'resample_source_size': 1250,
-    'resample_target_size': 625,
+    'constant_raster_size': 1000,  # pixels (square)
+    'resample_source_size': 1000,
+    'resample_target_size': 500,
     'clip_ratio': 0.5,
+    'analysis_raster_size': 1200,
+    'analysis_raster_target_size': 600,
+    'analysis_raster_clip_ratio': 0.5,
 }
 
 # Standard Scale (balanced, for regular benchmark runs)
@@ -80,6 +86,74 @@ RASTER_CONFIG_STANDARD = {
     'resample_source_size': 2500,
     'resample_target_size': 1250,
     'clip_ratio': 0.5,
+    'analysis_raster_size': 2500,
+    'analysis_raster_target_size': 1250,
+    'analysis_raster_clip_ratio': 0.5,
+}
+
+# ============================================================================
+# Standard Scale Per-Test Overrides
+# ============================================================================
+#
+# standard 作为论文主尺度，允许每个测试项使用独立的输入规模参数，
+# 以便把 12 项尽量拉到 30-90s 的可比较区间。tiny/small 仍保持统一倍数尺度，
+# 用于快速验证链路是否正常。
+#
+# 说明：
+# - 这里的覆盖是“按测试项覆盖配置字段”，最终输入仍在同一个 gdb 中生成；
+#   各测试项主要使用不同的输入图层，因此覆盖字段基本互不冲突。
+# - 若某项仍明显偏短，优先只调整对应测试项的覆盖参数，而不是叠加多步骤流程。
+#
+STANDARD_VECTOR_CONFIG_BY_TEST = {
+    # 控制组：尽量保持偏轻
+    'V1': {
+        'fishnet_rows': 250,
+        'fishnet_cols': 250,
+    },
+    'V2': {
+        'random_points': 25000,
+    },
+    # 重点提压项（先给一个保守起步值，后续用实测迭代）
+    'V3': {
+        'buffer_points': 80000,
+    },
+    'V4': {
+        'intersect_features_a': 350000,
+        'intersect_features_b': 350000,
+    },
+    'V5': {
+        'spatial_join_points': 250000,
+        'spatial_join_polygons': 5000,
+    },
+    'V6': {
+        'calculate_field_records': 400000,
+    },
+    # 混合项默认复用矢量/栅格输入规模
+    'M1': {},
+    'M2': {},
+}
+
+STANDARD_RASTER_CONFIG_BY_TEST = {
+    # 控制组：偏轻
+    'R1': {
+        'constant_raster_size': 2500,
+    },
+    # 重点提压项：优先通过像元规模与重采样比提时
+    'R2': {
+        'resample_source_size': 4500,
+        'resample_target_size': 2250,
+    },
+    'R3': {
+        'analysis_raster_size': 4500,
+        'analysis_raster_clip_ratio': 0.55,
+    },
+    'R4': {
+        'analysis_raster_size': 5000,
+        'analysis_raster_target_size': 2500,
+        'analysis_raster_clip_ratio': 0.55,
+    },
+    'M1': {},
+    'M2': {},
 }
 
 # Medium Scale (heavier than standard but still intended to be runnable)
@@ -100,6 +174,9 @@ RASTER_CONFIG_MEDIUM = {
     'resample_source_size': 3750,
     'resample_target_size': 1875,
     'clip_ratio': 0.5,
+    'analysis_raster_size': 3750,
+    'analysis_raster_target_size': 1875,
+    'analysis_raster_clip_ratio': 0.5,
 }
 
 # Large Scale (capped at half of the legacy medium profile)
@@ -120,6 +197,9 @@ RASTER_CONFIG_LARGE = {
     'resample_source_size': 5000,
     'resample_target_size': 2500,
     'clip_ratio': 0.5,
+    'analysis_raster_size': 5000,
+    'analysis_raster_target_size': 2500,
+    'analysis_raster_clip_ratio': 0.5,
 }
 
 # Select configuration to use
@@ -172,9 +252,17 @@ def is_multiprocess_enabled(scale=None):
 # ============================================================================
 
 # Data directory - stored in C:\temp for easy cleanup
-DATA_DIR = r'C:\temp\arcgis_benchmark_data'
+DATA_ROOT_DIR = r'C:\temp\arcgis_benchmark_data'
+DATA_DIR = DATA_ROOT_DIR
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
+
+# Shared cache / metadata paths
+OSM_CACHE_DIR = os.path.join(DATA_ROOT_DIR, '_osm_cache')
+BENCHMARK_MANIFEST_NAME = 'benchmark_manifest.json'
+BENCHMARK_RUN_LOG_NAME = 'benchmark_run.log'
+if not os.path.exists(OSM_CACHE_DIR):
+    os.makedirs(OSM_CACHE_DIR)
 
 # Results directory - stored in project folder (small files)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -443,6 +531,34 @@ def set_scale(scale, scale_overrides=None):
     
     # Update DEFAULT_GDB_NAME
     DEFAULT_GDB_NAME = 'benchmark_data_{}.gdb'.format(DATA_SCALE)
+
+
+def _merge_config(base_config, override):
+    merged = copy.deepcopy(base_config or {})
+    if isinstance(override, dict) and override:
+        merged.update(override)
+    return merged
+
+
+def get_vector_config_for_test(test_id):
+    """Return the active vector config, optionally overridden per test in standard scale."""
+    base = VECTOR_CONFIG
+    if DATA_SCALE != 'standard':
+        return base
+    key = str(test_id or '').upper()
+    overrides = STANDARD_VECTOR_CONFIG_BY_TEST.get(key) or {}
+    return _merge_config(base, overrides)
+
+
+def get_raster_config_for_test(test_id):
+    """Return the active raster config, optionally overridden per test in standard scale."""
+    base = RASTER_CONFIG
+    if DATA_SCALE != 'standard':
+        return base
+    key = str(test_id or '').upper()
+    overrides = STANDARD_RASTER_CONFIG_BY_TEST.get(key) or {}
+    return _merge_config(base, overrides)
+
 
 def print_config():
     """Print current configuration"""

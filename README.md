@@ -22,7 +22,7 @@
 - `QUICKSTART.md`：最短路径上手说明。
 - `GUI_v2_使用说明.md`：当前 GUI 的完整使用说明。
 - `docs/GUI_GUIDE.md`：图形界面详细操作指南。
-- `docs/README_SIMPLE.md`：面向直接使用者的简化版说明。
+- `HANDOFF.md`：当前实现进度、standard 调参状态和后续交接入口。
 - `RELEASE_NOTES.md`：`v1.0.0` 发布说明与发布前复核建议。
 - `docs/DESKTOP_TEST_GUIDE.md`：桌面软件窗口 vs 独立解释器扩展研究指南。
 - `制作EXE说明.md`：GUI 打包为 EXE 的说明。
@@ -160,7 +160,19 @@ C:\temp\arcgis_benchmark_data\
 
 - 报告文件位于每个规模目录根部。
 - `data\py2`、`data\py3`、`data\os` 分别保存各方案原始结果与运行产物。
+- 每次运行会生成 `benchmark_run.log`（stdout/stderr 镜像）与 `benchmark_manifest.json`（输入与 OSM/合成来源信息），便于回溯与复现。
 - 仓库内的 `results\` 目录仅保留给旧脚本或桌面扩展研究流程，不是主 GUI 默认输出位置。
+
+## `standard` 调参说明（收敛版）
+
+`tiny / small` 仍按统一倍数关系用于快速验证链路；`standard` 作为论文主尺度，支持“按测试项单独调参”，目标是让 12 项尽量进入 30-90 秒区间。
+
+- 配置入口：`config/settings.py`
+  - `STANDARD_VECTOR_CONFIG_BY_TEST`
+  - `STANDARD_RASTER_CONFIG_BY_TEST`
+
+栅格项说明：
+- `R2/R3/R4` 使用独立输入栅格（`analysis_raster_R2.tif` / `analysis_raster_R3.tif` / `analysis_raster_R4.tif`），只在各自 `setup()` 里生成，不计入计时；计时阶段只跑单一主操作。
 
 ## 系统要求
 

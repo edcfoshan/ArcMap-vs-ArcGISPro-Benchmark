@@ -20,7 +20,48 @@ except ImportError:
 
 from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
-from utils.raster_utils import create_constant_raster, spatial_analyst_available
+from utils.benchmark_inputs import (
+    get_analysis_boundary_extent,
+    get_analysis_crs,
+    get_analysis_raster_path,
+    get_benchmark_gdb_path,
+)
+from utils.benchmark_shapes import derive_block_size
+from utils.gis_cleanup import clear_workspace_cache, remove_dataset_artifacts
+from utils.raster_utils import create_constant_raster, create_block_pattern_raster
+
+
+def _analysis_extent(default_size):
+    """Return a square projected extent for fallback raster generation."""
+    extent = get_analysis_boundary_extent(settings.DATA_DIR)
+    if extent:
+        return extent
+    half = float(default_size) / 2.0
+    return (-half, -half, half, half)
+
+
+def _ensure_analysis_raster(output_path, raster_size):
+    """Create a patterned analysis raster when the generated input is missing."""
+    if arcpy.Exists(output_path):
+        try:
+            desc = arcpy.Describe(output_path)
+            if int(getattr(desc, 'width', 0) or 0) == int(raster_size) and int(getattr(desc, 'height', 0) or 0) == int(raster_size):
+                return output_path
+        except Exception:
+            pass
+
+    extent = _analysis_extent(raster_size)
+    sr = arcpy.SpatialReference(get_analysis_crs(settings.DATA_DIR))
+    block_size = derive_block_size(int(raster_size), target_blocks_per_side=60, min_block_size=8)
+    create_block_pattern_raster(
+        output_path,
+        cell_size=max(1.0, float(extent[2] - extent[0]) / float(raster_size)),
+        extent=extent,
+        block_size=block_size,
+        levels=8,
+        spatial_reference=sr
+    )
+    return output_path
 
 
 def _get_raster_min_max(raster_path):
@@ -54,36 +95,39 @@ class M1_PolygonToRaster(BaseBenchmark):
         self.cell_size = None
     
     def setup(self):
+        clear_workspace_cache(settings.DATA_DIR)
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
+        gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
         self.input_fc = os.path.join(gdb_path, "test_polygons_a")
         # Use version-specific output to avoid lock conflicts between Py2/Py3
         py_version = "py2" if sys.version_info[0] < 3 else "py3"
         self.output_raster = os.path.join(settings.DATA_DIR, "M1_poly_to_ras_{}.tif".format(py_version))
         
         # Calculate cell size based on data extent
-        raster_size = settings.RASTER_CONFIG['constant_raster_size']
-        self.cell_size = 360.0 / raster_size
+        cfg = settings.get_raster_config_for_test('M1')
+        raster_size = cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size'))
+        extent = get_analysis_boundary_extent(settings.DATA_DIR)
+        if extent:
+            self.cell_size = max(1.0, float(extent[2] - extent[0]) / float(raster_size))
+        else:
+            self.cell_size = 1.0
     
     def teardown(self):
-        if self.output_raster and arcpy.Exists(self.output_raster):
-            try:
-                arcpy.Delete_management(self.output_raster)
-            except Exception:
-                pass
+        if self.output_raster:
+            remove_dataset_artifacts(self.output_raster)
     
     def run_single(self):
         # Delete if exists
-        if arcpy.Exists(self.output_raster):
-            arcpy.Delete_management(self.output_raster)
+        remove_dataset_artifacts(self.output_raster)
 
         input_desc = arcpy.Describe(self.input_fc)
         input_extent = input_desc.extent
         input_width = float(input_extent.XMax) - float(input_extent.XMin)
         input_height = float(input_extent.YMax) - float(input_extent.YMin)
-        raster_size = int(settings.RASTER_CONFIG['constant_raster_size'])
+        cfg = settings.get_raster_config_for_test('M1')
+        raster_size = int(cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size')))
         self.cell_size = max(input_width, input_height) / float(raster_size)
         expected_width = int(round(input_width / self.cell_size))
         expected_height = int(round(input_height / self.cell_size))
@@ -132,15 +176,16 @@ class M2_RasterToPoint(BaseBenchmark):
         self.output_fc = None
     
     def setup(self):
+        clear_workspace_cache(settings.DATA_DIR)
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        # Use file-based raster instead of GDB raster
-        self.input_raster = os.path.join(settings.DATA_DIR, "constant_raster.tif")
+        self.input_raster = get_analysis_raster_path(settings.DATA_DIR)
         self.output_fc = os.path.join(settings.DATA_DIR, "M2_ras_to_point.shp")
 
         # Keep this benchmark runnable without generating the full vector dataset.
-        expected_size = int(settings.RASTER_CONFIG['constant_raster_size'])
+        cfg = settings.get_raster_config_for_test('M2')
+        expected_size = int(cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size')))
         needs_regen = True
         if arcpy.Exists(self.input_raster):
             try:
@@ -151,17 +196,7 @@ class M2_RasterToPoint(BaseBenchmark):
                 needs_regen = True
 
         if needs_regen:
-            raster_size = int(settings.RASTER_CONFIG['constant_raster_size'])
-            extent = "0 0 {0} {0}".format(raster_size)
-            sr = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
-            create_constant_raster(
-                self.input_raster,
-                cell_size=1,
-                extent=extent,
-                value=1,
-                spatial_reference=sr,
-                use_spatial_analyst=spatial_analyst_available()
-            )
+            _ensure_analysis_raster(self.input_raster, expected_size)
 
     def _get_input_raster_stats(self):
         """Return input raster dimensions and the expected output count."""
@@ -174,7 +209,8 @@ class M2_RasterToPoint(BaseBenchmark):
                 "M2_RasterToPoint 无法读取输入栅格尺寸: {}".format(self.input_raster)
             )
 
-        expected_size = int(settings.RASTER_CONFIG['constant_raster_size'])
+        cfg = settings.get_raster_config_for_test('M2')
+        expected_size = int(cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size')))
         if input_width != expected_size or input_height != expected_size:
             raise RuntimeError(
                 "M2_RasterToPoint 输入栅格尺寸不符合当前规模: 实际 {}x{}, 期望 {}x{}".format(
@@ -186,16 +222,12 @@ class M2_RasterToPoint(BaseBenchmark):
         return input_width, input_height, expected_features
     
     def teardown(self):
-        if self.output_fc and arcpy.Exists(self.output_fc):
-            try:
-                arcpy.Delete_management(self.output_fc)
-            except Exception:
-                pass
+        if self.output_fc:
+            remove_dataset_artifacts(self.output_fc)
     
     def run_single(self):
         # Delete if exists
-        if arcpy.Exists(self.output_fc):
-            arcpy.Delete_management(self.output_fc)
+        remove_dataset_artifacts(self.output_fc)
 
         input_width, input_height, expected_features = self._get_input_raster_stats()
         

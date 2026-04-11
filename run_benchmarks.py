@@ -8,6 +8,8 @@ Usage:
     Python 3.x: "C:\\Program Files\\ArcGIS\\Pro\\bin\\Python\\envs\\arcgispro-py3\\python.exe" run_benchmarks.py [--category vector|raster|mixed|all]
 """
 from __future__ import print_function, division, absolute_import
+import atexit
+import io
 import sys
 import os
 import argparse
@@ -19,6 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import settings
 from utils.arcgis_env import ArcGISEnvironment
+from utils.benchmark_manifest import load_manifest, manifest_summary
+from utils.gis_cleanup import clear_workspace_cache
 from utils.result_exporter import ResultExporter
 
 # Import ArcGIS-based benchmarks (may fail if arcpy not available)
@@ -45,6 +49,81 @@ try:
     HAS_OS_BENCHMARKS = True
 except Exception:
     HAS_OS_BENCHMARKS = False
+
+
+_RUN_LOG_HANDLE = None
+_RUN_ORIGINAL_STDOUT = None
+_RUN_ORIGINAL_STDERR = None
+
+
+class _TeeStream(object):
+    """Duplicate writes to two streams."""
+
+    def __init__(self, primary, secondary):
+        self.primary = primary
+        self.secondary = secondary
+
+    def write(self, data):
+        if data is None:
+            return
+        try:
+            self.primary.write(data)
+        except Exception:
+            pass
+        try:
+            self.secondary.write(data)
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self.primary.flush()
+        except Exception:
+            pass
+        try:
+            self.secondary.flush()
+        except Exception:
+            pass
+
+
+def _stop_run_logging():
+    global _RUN_LOG_HANDLE, _RUN_ORIGINAL_STDOUT, _RUN_ORIGINAL_STDERR
+    if _RUN_LOG_HANDLE is not None:
+        try:
+            _RUN_LOG_HANDLE.flush()
+        except Exception:
+            pass
+        try:
+            _RUN_LOG_HANDLE.close()
+        except Exception:
+            pass
+        _RUN_LOG_HANDLE = None
+    if _RUN_ORIGINAL_STDOUT is not None:
+        sys.stdout = _RUN_ORIGINAL_STDOUT
+        _RUN_ORIGINAL_STDOUT = None
+    if _RUN_ORIGINAL_STDERR is not None:
+        sys.stderr = _RUN_ORIGINAL_STDERR
+        _RUN_ORIGINAL_STDERR = None
+
+
+atexit.register(_stop_run_logging)
+
+
+def _start_run_logging(log_path):
+    """Mirror stdout/stderr into a run log file."""
+    global _RUN_LOG_HANDLE, _RUN_ORIGINAL_STDOUT, _RUN_ORIGINAL_STDERR
+    if _RUN_LOG_HANDLE is not None:
+        return
+
+    log_dir = os.path.dirname(log_path)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    _RUN_ORIGINAL_STDOUT = sys.stdout
+    _RUN_ORIGINAL_STDERR = sys.stderr
+    _RUN_LOG_HANDLE = io.open(log_path, 'w', encoding='utf-8')
+    sys.stdout = _TeeStream(sys.stdout, _RUN_LOG_HANDLE)
+    sys.stderr = _TeeStream(sys.stderr, _RUN_LOG_HANDLE)
 
 
 def check_arcpy():
@@ -247,10 +326,16 @@ def generate_test_data():
         from data.generate_test_data import TestDataGenerator
         generator = TestDataGenerator()
         datasets = generator.generate_all()
+        if not datasets:
+            clear_workspace_cache(settings.DATA_DIR)
+            print("\nTest data generation failed")
+            return False
+        clear_workspace_cache(settings.DATA_DIR)
         print("\nTest data generated successfully")
         return True
     except Exception as e:
         print("\nError generating test data: {}".format(str(e)))
+        clear_workspace_cache(settings.DATA_DIR)
         import traceback
         traceback.print_exc()
         return False
@@ -340,13 +425,19 @@ def run_benchmarks(benchmarks, num_runs, warmup_runs):
 
 def build_export_metadata(result_tag, num_runs, warmup_runs):
     """Build metadata saved alongside grouped benchmark result files"""
+    manifest_root = getattr(settings, 'TIMESTAMPED_RESULTS_DIR', None) or settings.DATA_DIR
+    manifest = load_manifest(manifest_root, default={})
+    benchmark_log_root = manifest_root
     return {
         'result_tag': result_tag,
         'data_scale': settings.DATA_SCALE,
         'test_runs': num_runs,
         'warmup_runs': warmup_runs,
         'vector_config': copy.deepcopy(settings.VECTOR_CONFIG),
-        'raster_config': copy.deepcopy(settings.RASTER_CONFIG)
+        'raster_config': copy.deepcopy(settings.RASTER_CONFIG),
+        'benchmark_run_log': os.path.join(benchmark_log_root, getattr(settings, 'BENCHMARK_RUN_LOG_NAME', 'benchmark_run.log')),
+        'benchmark_manifest': manifest,
+        'benchmark_manifest_summary': manifest_summary(manifest),
     }
 
 
@@ -882,6 +973,13 @@ def main():
         output_dir = settings.DATA_DIR
         print("\n[Info] Results will be saved to: {}".format(settings.DATA_DIR))
 
+    run_log_path = os.path.join(
+        getattr(settings, 'TIMESTAMPED_RESULTS_DIR', None) or output_dir,
+        getattr(settings, 'BENCHMARK_RUN_LOG_NAME', 'benchmark_run.log')
+    )
+    _start_run_logging(run_log_path)
+    print("\n[Info] Benchmark run log: {}".format(run_log_path))
+
     # Determine whether open-source benchmarks should be included.
     include_opensource = False
     if args.opensource:
@@ -980,68 +1078,6 @@ def main():
         print("1. Run this script with the other Python version")
         print("2. Run analyze_results.py to generate comparison tables")
 
-    return 0
-
-    # Generate test data if requested (现在会使用正确的时间戳目录)
-    if args.generate_data:
-        if not generate_test_data():
-            print("\nERROR: Failed to generate test data. Aborting benchmark run to avoid partial results.")
-            return 1
-
-    # Get benchmarks
-    # Check if opensource flag is valid (Python 3.x only)
-    include_opensource = False
-    if args.opensource:
-        if sys.version_info[0] < 3:
-            print("\n[注意] 开源库基准测试需要 Python 3.x，在 Python 2.x 环境下跳过")
-        elif not HAS_OS_BENCHMARKS:
-            print("\n[注意] 未找到开源库模块 (geopandas, rasterio等)，跳过")
-        else:
-            include_opensource = True
-            print("\n[信息] 将包含开源库 (GeoPandas/Rasterio) 基准测试")
-
-    benchmarks = get_benchmarks(args.category, include_opensource)
-
-    if not benchmarks:
-        print("\nNo benchmarks to run for category: {}".format(args.category))
-        return 1
-
-    # Get run parameters
-    num_runs = args.runs if args.runs is not None else settings.TEST_RUNS
-    warmup_runs = args.warmup if args.warmup is not None else settings.WARMUP_RUNS
-    
-    # Run benchmarks
-    results = run_benchmarks(benchmarks, num_runs, warmup_runs)
-    
-    # Run multiprocess benchmarks if requested
-    mp_results = []
-    if args.multiprocess:
-        mp_results = run_multiprocess_benchmarks(num_runs, warmup_runs, args.mp_workers, include_opensource)
-        results.extend(mp_results)
-    
-    # Print summary
-    print_summary(results)
-    
-    # Save results
-    print("\nSaving results...")
-    output_files = save_results(
-        results,
-        output_dir,
-        metadata=build_export_metadata("py{}".format(sys.version_info[0]), num_runs, warmup_runs)
-    )
-    
-    print("\n" + "=" * 70)
-    print("Benchmark Complete")
-    print("=" * 70)
-    
-    if args.multiprocess:
-        print("\nMultiprocess comparison completed!")
-        print("Check the results for single vs multiprocess speedup data.")
-    else:
-        print("\nNext steps:")
-        print("1. Run this script with the other Python version")
-        print("2. Run analyze_results.py to generate comparison tables")
-    
     return 0
 
 

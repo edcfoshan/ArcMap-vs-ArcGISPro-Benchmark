@@ -44,6 +44,8 @@ C:\temp\arcgis_benchmark_data\<时间戳>\<规模>\
 - `comparison_table.tex`
 - `comparison_data.csv`
 - `comparison_data.json`
+- `benchmark_run.log`（stdout/stderr 镜像）
+- `benchmark_manifest.json`（输入数据与 OSM/合成来源信息）
 - `data\py2`
 - `data\py3`
 - `data\os`

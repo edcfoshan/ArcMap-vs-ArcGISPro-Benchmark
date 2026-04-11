@@ -13,6 +13,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import settings
+from utils.gis_cleanup import clear_workspace_cache
 from utils.timer import BenchmarkTimer, ProgressHeartbeat
 
 
@@ -118,13 +119,13 @@ class BaseBenchmark(object):
         print("\n  [{}] 初始化测试: {}".format(py_version, self.name))
         print("  类别: {}".format(self.category))
         
-        # Setup
-        print("  执行 setup()...")
-        with ProgressHeartbeat("{} setup()".format(self.name)):
-            self.setup()
-        print("  [OK] setup() 完成")
-        
         try:
+            # Setup
+            print("  执行 setup()...")
+            with ProgressHeartbeat("{} setup()".format(self.name)):
+                self.setup()
+            print("  [OK] setup() 完成")
+
             # Warmup runs
             if warmup_runs > 0:
                 print("  预热运行 ({} 次)...".format(warmup_runs))
@@ -160,8 +161,11 @@ class BaseBenchmark(object):
         finally:
             # Teardown
             print("  执行 teardown()...")
-            with ProgressHeartbeat("{} teardown()".format(self.name)):
-                self.teardown()
+            try:
+                with ProgressHeartbeat("{} teardown()".format(self.name)):
+                    self.teardown()
+            finally:
+                clear_workspace_cache(settings.DATA_DIR)
             print("  [OK] teardown() 完成")
         
         # Calculate statistics
@@ -192,6 +196,7 @@ class BaseBenchmark(object):
         # Combine timing results with benchmark result
         timing_results = bt.get_results()
         result.update(timing_results)
+        clear_workspace_cache(settings.DATA_DIR)
         
         return result
     

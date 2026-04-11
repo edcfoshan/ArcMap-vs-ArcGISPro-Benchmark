@@ -20,6 +20,12 @@ except ImportError:
 
 from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
+from utils.benchmark_inputs import (
+    get_analysis_boundary_extent,
+    get_analysis_boundary_path,
+    get_analysis_crs,
+    get_benchmark_gdb_path,
+)
 from utils.benchmark_shapes import factor_grid_dimensions, expected_offset_grid_intersections
 
 
@@ -38,6 +44,12 @@ def _validated_count_result(actual_count, expected_count, metric_name):
         'validation_observed': int(actual_count),
         'validation_passed': True,
     }
+
+
+def _format_extent(extent, default_extent=(-500000.0, -500000.0, 500000.0, 500000.0)):
+    """Format an extent tuple for ArcPy geoprocessing calls."""
+    values = extent or default_extent
+    return "{} {} {} {}".format(float(values[0]), float(values[1]), float(values[2]), float(values[3]))
 
 
 class VectorBenchmarks(object):
@@ -63,13 +75,20 @@ class V1_CreateFishnet(BaseBenchmark):
     
     def __init__(self):
         super(V1_CreateFishnet, self).__init__("V1_CreateFishnet", "vector")
-        self.rows = settings.VECTOR_CONFIG['fishnet_rows']
-        self.cols = settings.VECTOR_CONFIG['fishnet_cols']
+        cfg = settings.get_vector_config_for_test('V1')
+        self.rows = cfg['fishnet_rows']
+        self.cols = cfg['fishnet_cols']
         self.output_fc = None
+        self.boundary_fc = None
+        self.boundary_extent = None
+        self.spatial_reference = None
     
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
+        self.boundary_fc = get_analysis_boundary_path(settings.DATA_DIR)
+        self.boundary_extent = get_analysis_boundary_extent(settings.DATA_DIR)
+        self.spatial_reference = arcpy.SpatialReference(get_analysis_crs(settings.DATA_DIR))
         self.output_fc = os.path.join(
             settings.DATA_DIR,
             "V1_fishnet_output.shp"
@@ -88,23 +107,23 @@ class V1_CreateFishnet(BaseBenchmark):
             arcpy.Delete_management(self.output_fc)
         
         # Create fishnet
+        extent_values = self.boundary_extent or (-500000.0, -500000.0, 500000.0, 500000.0)
         arcpy.CreateFishnet_management(
             out_feature_class=self.output_fc,
-            origin_coord="-180 -90",
-            y_axis_coord="-180 -80",
+            origin_coord="{} {}".format(extent_values[0], extent_values[1]),
+            y_axis_coord="{} {}".format(extent_values[0], extent_values[1] + 10.0),
             cell_width=0,
             cell_height=0,
             number_rows=self.rows,
             number_columns=self.cols,
-            corner_coord="180 90",
+            corner_coord="{} {}".format(extent_values[2], extent_values[3]),
             labels="NO_LABELS",
             template="",
             geometry_type="POLYGON"
         )
         
         # Add spatial reference
-        sr = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
-        arcpy.DefineProjection_management(self.output_fc, sr)
+        arcpy.DefineProjection_management(self.output_fc, self.spatial_reference or arcpy.SpatialReference(get_analysis_crs(settings.DATA_DIR)))
         
         count = int(arcpy.GetCount_management(self.output_fc)[0])
         return _validated_count_result(count, self.rows * self.cols, "fishnet_feature_count")
@@ -115,12 +134,17 @@ class V2_CreateRandomPoints(BaseBenchmark):
     
     def __init__(self):
         super(V2_CreateRandomPoints, self).__init__("V2_CreateRandomPoints", "vector")
-        self.num_points = settings.VECTOR_CONFIG['random_points']
+        cfg = settings.get_vector_config_for_test('V2')
+        self.num_points = cfg['random_points']
         self.output_fc = None
+        self.boundary_fc = None
+        self.boundary_extent = None
     
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
+        self.boundary_fc = get_analysis_boundary_path(settings.DATA_DIR)
+        self.boundary_extent = get_analysis_boundary_extent(settings.DATA_DIR)
         self.output_fc = os.path.join(
             settings.DATA_DIR,
             "V2_random_points.shp"
@@ -139,13 +163,17 @@ class V2_CreateRandomPoints(BaseBenchmark):
             arcpy.Delete_management(self.output_fc)
         
         # Create random points
-        arcpy.CreateRandomPoints_management(
-            out_path=settings.DATA_DIR,
-            out_name="V2_random_points",
-            constraining_extent="-180 -90 180 90",
-            number_of_points_or_field=self.num_points,
-            minimum_allowed_distance="0 DecimalDegrees"
-        )
+        create_kwargs = {
+            'out_path': settings.DATA_DIR,
+            'out_name': "V2_random_points",
+            'number_of_points_or_field': self.num_points,
+            'minimum_allowed_distance': "0 Meters",
+        }
+        if self.boundary_fc and arcpy.Exists(self.boundary_fc):
+            create_kwargs['constraining_feature_class'] = self.boundary_fc
+        else:
+            create_kwargs['constraining_extent'] = _format_extent(self.boundary_extent)
+        arcpy.CreateRandomPoints_management(**create_kwargs)
         
         count = int(arcpy.GetCount_management(self.output_fc)[0])
         return _validated_count_result(count, self.num_points, "random_point_count")
@@ -158,31 +186,25 @@ class V3_Buffer(BaseBenchmark):
         super(V3_Buffer, self).__init__("V3_Buffer", "vector")
         self.input_fc = None
         self.output_fc = None
-        self.num_points = settings.VECTOR_CONFIG['buffer_points']
+        cfg = settings.get_vector_config_for_test('V3')
+        self.num_points = cfg['buffer_points']
     
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        # Always recreate input data to ensure consistency
-        self.input_fc = os.path.join(settings.DATA_DIR, "V3_buffer_input.shp")
+        gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
+        self.input_fc = os.path.join(gdb_path, "buffer_points")
         self.output_fc = os.path.join(settings.DATA_DIR, "V3_buffer_output.shp")
-        
-        # Delete existing input data to ensure fresh data
-        if arcpy.Exists(self.input_fc):
-            try:
-                arcpy.Delete_management(self.input_fc)
-            except:
-                pass
-        
-        # Always create fresh input data
-        arcpy.CreateRandomPoints_management(
-            out_path=settings.DATA_DIR,
-            out_name="V3_buffer_input",
-            constraining_extent="-180 -90 180 90",
-            number_of_points_or_field=self.num_points,
-            minimum_allowed_distance="0 DecimalDegrees"
-        )
+
+        if not arcpy.Exists(self.input_fc):
+            arcpy.CreateRandomPoints_management(
+                out_path=gdb_path,
+                out_name="buffer_points",
+                constraining_extent=_format_extent(get_analysis_boundary_extent(settings.DATA_DIR)),
+                number_of_points_or_field=self.num_points,
+                minimum_allowed_distance="0 Meters"
+            )
     
     def teardown(self):
         if self.output_fc and arcpy.Exists(self.output_fc):
@@ -200,7 +222,7 @@ class V3_Buffer(BaseBenchmark):
         arcpy.Buffer_analysis(
             in_features=self.input_fc,
             out_feature_class=self.output_fc,
-            buffer_distance_or_field="1 DecimalDegrees",
+            buffer_distance_or_field="1000 Meters",
             line_side="FULL",
             line_end_type="ROUND",
             dissolve_option="NONE"
@@ -219,15 +241,16 @@ class V4_Intersect(BaseBenchmark):
         self.input_a = None
         self.input_b = None
         self.output_fc = None
-        rows_a, cols_a = factor_grid_dimensions(settings.VECTOR_CONFIG['intersect_features_a'])
-        rows_b, cols_b = factor_grid_dimensions(settings.VECTOR_CONFIG['intersect_features_b'])
+        cfg = settings.get_vector_config_for_test('V4')
+        rows_a, cols_a = factor_grid_dimensions(cfg['intersect_features_a'])
+        rows_b, cols_b = factor_grid_dimensions(cfg['intersect_features_b'])
         self.expected_features = expected_offset_grid_intersections(rows_a, cols_a, rows_b, cols_b)
     
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
+        gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
         self.input_a = os.path.join(gdb_path, "test_polygons_a")
         self.input_b = os.path.join(gdb_path, "test_polygons_b")
         self.output_fc = os.path.join(settings.DATA_DIR, "V4_intersect_output.shp")
@@ -270,7 +293,7 @@ class V5_SpatialJoin(BaseBenchmark):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
+        gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
         self.target_features = os.path.join(gdb_path, "spatial_join_points")
         self.join_features = os.path.join(gdb_path, "spatial_join_polygons")
         # Use version-specific output to avoid lock conflicts between Py2/Py3
@@ -315,7 +338,7 @@ class V6_CalculateField(BaseBenchmark):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
+        gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
         self.input_fc = os.path.join(gdb_path, "calculate_field_fc")
         self.working_fc = os.path.join(settings.DATA_DIR, "V6_calculate_field.shp")
         

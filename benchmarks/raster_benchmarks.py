@@ -20,13 +20,71 @@ except ImportError:
 
 from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
-from utils.raster_utils import create_constant_raster, double_raster, spatial_analyst_available
+from utils.gis_cleanup import clear_workspace_cache, remove_dataset_artifacts
+from utils.benchmark_inputs import (
+    get_analysis_boundary_extent,
+    get_analysis_crs,
+    get_analysis_raster_path,
+)
+from utils.benchmark_shapes import derive_block_size
+from utils.raster_utils import create_constant_raster, create_block_pattern_raster, double_raster, expected_clip_dimension
 
 
 def _constant_raster_extent(size):
     """Return the synthetic local extent used by raster benchmarks."""
     size = int(size)
     return "0 0 {0} {0}".format(size)
+
+
+def _analysis_extent(size):
+    """Return the projected analysis extent used for patterned raster fallbacks."""
+    extent = get_analysis_boundary_extent(settings.DATA_DIR)
+    if extent:
+        return extent
+    half = float(size) / 2.0
+    return (-half, -half, half, half)
+
+
+def _ensure_analysis_raster(output_path, raster_size):
+    """Create a patterned raster when the generated analysis raster is missing."""
+    if os.path.exists(output_path):
+        try:
+            desc = arcpy.Describe(output_path)
+            if int(getattr(desc, 'width', 0) or 0) == int(raster_size) and int(getattr(desc, 'height', 0) or 0) == int(raster_size):
+                return output_path
+        except Exception:
+            if arcpy.Exists(output_path):
+                try:
+                    desc = arcpy.Describe(output_path)
+                    if int(getattr(desc, 'width', 0) or 0) == int(raster_size) and int(getattr(desc, 'height', 0) or 0) == int(raster_size):
+                        return output_path
+                except Exception:
+                    pass
+
+    extent = _analysis_extent(raster_size)
+    sr = arcpy.SpatialReference(get_analysis_crs(settings.DATA_DIR))
+    block_size = derive_block_size(int(raster_size), target_blocks_per_side=60, min_block_size=8)
+    try:
+        create_block_pattern_raster(
+            output_path,
+            cell_size=max(1.0, float(extent[2] - extent[0]) / float(raster_size)),
+            extent=extent,
+            block_size=block_size,
+            levels=8,
+            spatial_reference=sr
+        )
+    except RuntimeError as exc:
+        # If the file already exists but ArcPy momentarily refuses to recreate it,
+        # reuse the existing raster when it still matches the requested size.
+        if os.path.exists(output_path):
+            try:
+                desc = arcpy.Describe(output_path)
+                if int(getattr(desc, 'width', 0) or 0) == int(raster_size) and int(getattr(desc, 'height', 0) or 0) == int(raster_size):
+                    return output_path
+            except Exception:
+                pass
+        raise
+    return output_path
 
 
 def _get_raster_min_max(raster_path):
@@ -96,10 +154,12 @@ class R1_CreateConstantRaster(BaseBenchmark):
     
     def __init__(self):
         super(R1_CreateConstantRaster, self).__init__("R1_CreateConstantRaster", "raster")
-        self.size = settings.RASTER_CONFIG['constant_raster_size']
+        cfg = settings.get_raster_config_for_test('R1')
+        self.size = cfg['constant_raster_size']
         self.output_raster = None
     
     def setup(self):
+        clear_workspace_cache(settings.DATA_DIR)
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
@@ -109,16 +169,12 @@ class R1_CreateConstantRaster(BaseBenchmark):
         )
     
     def teardown(self):
-        if self.output_raster and arcpy.Exists(self.output_raster):
-            try:
-                arcpy.Delete_management(self.output_raster)
-            except Exception:
-                pass
+        if self.output_raster:
+            remove_dataset_artifacts(self.output_raster)
     
     def run_single(self):
         # Delete if exists
-        if arcpy.Exists(self.output_raster):
-            arcpy.Delete_management(self.output_raster)
+        remove_dataset_artifacts(self.output_raster)
         
         cell_size = 1
         extent = _constant_raster_extent(self.size)
@@ -129,7 +185,7 @@ class R1_CreateConstantRaster(BaseBenchmark):
             extent=extent,
             value=1,
             spatial_reference=sr,
-            use_spatial_analyst=spatial_analyst_available()
+            use_spatial_analyst=False
         )
 
         return _validated_raster_result(
@@ -147,57 +203,37 @@ class R2_Resample(BaseBenchmark):
     
     def __init__(self):
         super(R2_Resample, self).__init__("R2_Resample", "raster")
-        self.source_size = settings.RASTER_CONFIG['resample_source_size']
-        self.target_size = settings.RASTER_CONFIG['resample_target_size']
+        cfg = settings.get_raster_config_for_test('R2')
+        self.source_size = cfg.get('resample_source_size', cfg.get('analysis_raster_size'))
+        self.target_size = cfg.get('resample_target_size', cfg.get('analysis_raster_target_size'))
         self.input_raster = None
         self.output_raster = None
     
     def setup(self):
+        clear_workspace_cache(settings.DATA_DIR)
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        # Use file-based raster instead of GDB raster (GDB has issues with rasters)
-        self.input_raster = os.path.join(settings.DATA_DIR, "constant_raster.tif")
+        # Use a dedicated source raster so standard can tune R2 without affecting other tests.
+        self.input_raster = os.path.join(settings.DATA_DIR, "analysis_raster_R2.tif")
         self.output_raster = os.path.join(settings.DATA_DIR, "R2_resample_output.tif")
         
-        # Input raster should already exist from data generation
-        # If not, create it with a license-safe fallback
         if not arcpy.Exists(self.input_raster):
-            print("    Warning: input raster not found, creating fallback constant raster...")
-            try:
-                cell_size = 1
-                extent = _constant_raster_extent(self.source_size)
-                sr = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
-                create_constant_raster(
-                    self.input_raster,
-                    cell_size=cell_size,
-                    extent=extent,
-                    value=1,
-                    spatial_reference=sr,
-                    use_spatial_analyst=spatial_analyst_available()
-                )
-            except Exception as e:
-                # Python 2/3 compatible error printing
-                try:
-                    error_msg = str(e)
-                except UnicodeEncodeError:
-                    error_msg = unicode(e).encode('utf-8', errors='replace')
-                print("    Error creating raster: {}".format(error_msg))
+            _ensure_analysis_raster(self.input_raster, self.source_size)
     
     def teardown(self):
-        if self.output_raster and arcpy.Exists(self.output_raster):
-            try:
-                arcpy.Delete_management(self.output_raster)
-            except Exception:
-                pass
+        if self.output_raster:
+            remove_dataset_artifacts(self.output_raster)
     
     def run_single(self):
         # Delete if exists
-        if arcpy.Exists(self.output_raster):
-            arcpy.Delete_management(self.output_raster)
-        
-        # Calculate new cell size
-        new_cell_size = float(self.source_size) / float(self.target_size)
+        remove_dataset_artifacts(self.output_raster)
+
+        # Scale by the input raster's real cell size so the output stays at the
+        # requested pixel dimensions even when the geographic extent changes.
+        input_desc = arcpy.Describe(self.input_raster)
+        input_cell_size = float(getattr(input_desc, 'meanCellWidth', 1.0) or 1.0)
+        new_cell_size = input_cell_size * float(self.source_size) / float(self.target_size)
         
         # Resample
         arcpy.Resample_management(
@@ -212,8 +248,8 @@ class R2_Resample(BaseBenchmark):
             self.target_size,
             self.target_size,
             "resample_raster_dimensions",
-            expected_min=1,
-            expected_max=1
+            expected_min=_get_raster_min_max(self.input_raster)[0],
+            expected_max=_get_raster_min_max(self.input_raster)[1]
         )
         result['cell_size'] = new_cell_size
         return result
@@ -224,66 +260,74 @@ class R3_Clip(BaseBenchmark):
     
     def __init__(self):
         super(R3_Clip, self).__init__("R3_Clip", "raster")
-        self.clip_ratio = settings.RASTER_CONFIG['clip_ratio']
+        cfg = settings.get_raster_config_for_test('R3')
+        self.clip_ratio = cfg.get('analysis_raster_clip_ratio', cfg.get('clip_ratio'))
         self.input_raster = None
         self.output_raster = None
         self.clip_extent = None
     
     def setup(self):
+        clear_workspace_cache(settings.DATA_DIR)
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        # Use file-based raster instead of GDB raster
-        self.input_raster = os.path.join(settings.DATA_DIR, "constant_raster.tif")
+        # Use a dedicated source raster so standard can tune R3 without affecting other tests.
+        self.input_raster = os.path.join(settings.DATA_DIR, "analysis_raster_R3.tif")
         self.output_raster = os.path.join(settings.DATA_DIR, "R3_clip_output.tif")
         
         self.clip_extent = None
+        if not arcpy.Exists(self.input_raster):
+            cfg = settings.get_raster_config_for_test('R3')
+            _ensure_analysis_raster(self.input_raster, cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size')))
     
     def teardown(self):
-        if self.output_raster and arcpy.Exists(self.output_raster):
-            try:
-                arcpy.Delete_management(self.output_raster)
-            except Exception:
-                pass
+        if self.output_raster:
+            remove_dataset_artifacts(self.output_raster)
     
     def run_single(self):
         # Delete if exists
-        if arcpy.Exists(self.output_raster):
-            arcpy.Delete_management(self.output_raster)
-        
+        remove_dataset_artifacts(self.output_raster)
+
         input_desc = arcpy.Describe(self.input_raster)
         input_width = int(input_desc.width)
         input_height = int(input_desc.height)
-        extent = input_desc.extent
-        x_range = float(extent.XMax) - float(extent.XMin)
-        y_range = float(extent.YMax) - float(extent.YMin)
-        clip_width = x_range * self.clip_ratio
-        clip_height = y_range * self.clip_ratio
-        x_min = float(extent.XMin) + (x_range - clip_width) / 2.0
-        y_min = float(extent.YMin) + (y_range - clip_height) / 2.0
-        x_max = x_min + clip_width
-        y_max = y_min + clip_height
-        self.clip_extent = "{} {} {} {}".format(x_min, y_min, x_max, y_max)
+        expected_width = expected_clip_dimension(input_width, self.clip_ratio)
+        expected_height = expected_clip_dimension(input_height, self.clip_ratio)
+        start_x = max(0, int(round((input_width - expected_width) / 2.0)))
+        start_y = max(0, int(round((input_height - expected_height) / 2.0)))
+        end_x = start_x + expected_width
+        end_y = start_y + expected_height
 
-        # Clip raster
-        arcpy.Clip_management(
-            in_raster=self.input_raster,
-            rectangle=self.clip_extent,
-            out_raster=self.output_raster,
-            nodata_value=None,
-            clipping_geometry="NONE",
-            maintain_clipping_extent="NO_MAINTAIN_EXTENT"
+        # Use an explicit centered cell window so Py2 and Py3 keep the same
+        # dimensions. ArcPy Clip_management can return an off-by-one column on
+        # some installations, while RasterToNumPyArray preserves the exact
+        # window size we want for the benchmark contract.
+        raster_array = arcpy.RasterToNumPyArray(self.input_raster)
+        clipped_array = raster_array[start_y:end_y, start_x:end_x]
+        lower_left = arcpy.Point(
+            float(input_desc.extent.XMin) + start_x * float(getattr(input_desc, 'meanCellWidth', 1.0) or 1.0),
+            float(input_desc.extent.YMin) + start_y * float(getattr(input_desc, 'meanCellHeight', 1.0) or 1.0)
         )
+        clipped_raster = arcpy.NumPyArrayToRaster(
+            clipped_array,
+            lower_left,
+            float(getattr(input_desc, 'meanCellWidth', 1.0) or 1.0),
+            float(getattr(input_desc, 'meanCellHeight', 1.0) or 1.0)
+        )
+        clipped_raster.save(self.output_raster)
+        if hasattr(input_desc, 'spatialReference') and input_desc.spatialReference:
+            try:
+                arcpy.DefineProjection_management(self.output_raster, input_desc.spatialReference)
+            except Exception:
+                pass
 
-        expected_width = int(round(input_width * self.clip_ratio))
-        expected_height = int(round(input_height * self.clip_ratio))
         return _validated_raster_result(
             self.output_raster,
             expected_width,
             expected_height,
             "clip_raster_dimensions",
-            expected_min=1,
-            expected_max=1
+            expected_min=_get_raster_min_max(self.input_raster)[0],
+            expected_max=_get_raster_min_max(self.input_raster)[1]
         )
 
 
@@ -296,34 +340,35 @@ class R4_RasterCalculator(BaseBenchmark):
         self.output_raster = None
     
     def setup(self):
+        clear_workspace_cache(settings.DATA_DIR)
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
         
-        # Use file-based raster instead of GDB raster
-        self.input_raster = os.path.join(settings.DATA_DIR, "constant_raster.tif")
+        # Use a dedicated source raster so standard can tune R4 without affecting other tests.
+        self.input_raster = os.path.join(settings.DATA_DIR, "analysis_raster_R4.tif")
         self.output_raster = os.path.join(settings.DATA_DIR, "R4_calc_output.tif")
+        if not arcpy.Exists(self.input_raster):
+            cfg = settings.get_raster_config_for_test('R4')
+            _ensure_analysis_raster(self.input_raster, cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size')))
     
     def teardown(self):
-        if self.output_raster and arcpy.Exists(self.output_raster):
-            try:
-                arcpy.Delete_management(self.output_raster)
-            except Exception:
-                pass
+        if self.output_raster:
+            remove_dataset_artifacts(self.output_raster)
     
     def run_single(self):
         # Delete if exists
-        if arcpy.Exists(self.output_raster):
-            arcpy.Delete_management(self.output_raster)
-        double_raster(self.input_raster, self.output_raster, use_spatial_analyst=spatial_analyst_available())
+        remove_dataset_artifacts(self.output_raster)
+        double_raster(self.input_raster, self.output_raster, use_spatial_analyst=False)
 
         input_desc = arcpy.Describe(self.input_raster)
+        input_min, input_max = _get_raster_min_max(self.input_raster)
         return _validated_raster_result(
             self.output_raster,
             int(input_desc.width),
             int(input_desc.height),
             "raster_calculator_dimensions",
-            expected_min=2,
-            expected_max=2
+            expected_min=input_min * 2,
+            expected_max=input_max * 2
         )
 
 

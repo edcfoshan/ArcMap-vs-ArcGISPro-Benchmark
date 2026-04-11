@@ -2,6 +2,12 @@
 
 > 这是扩展研究流程，不属于 `v1.0.0` 主 GUI 的默认执行链路。
 
+## 当前状态
+
+- 主流程已经统一输出 `benchmark_run.log` 和 `benchmark_manifest.json`，方便复现与回溯。
+- 这份文档仍然只描述扩展研究流程，不替代主 GUI 的 `C:\temp\arcgis_benchmark_data` 输出链路。
+- 当前交接与未完成调参见 `HANDOFF.md`。
+
 ## 适用场景
 
 如果你想额外比较以下四种运行方式，可以使用本指南：
@@ -118,6 +124,7 @@ results\tables\
 
 - `desktop_comparison_report.md`
 - `desktop_comparison_data.csv`
+- 如需和主流程结果对照，建议同时查看主目录中的 `benchmark_run.log` 与 `benchmark_manifest.json`。
 
 ## 推荐参数
 

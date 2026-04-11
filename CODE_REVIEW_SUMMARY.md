@@ -1,5 +1,7 @@
 # 代码审查总结
 
+> 历史审查记录，当前的实现进度、standard 调参方案和后续交接请以 `HANDOFF.md`、`README.md` 和 `QUICKSTART.md` 为准。
+
 ## 已修复的严重漏洞
 
 ### 1. BaseBenchmark 强制依赖 arcpy（已修复）

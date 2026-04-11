@@ -1,627 +1,801 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Generate test data for ArcGIS performance benchmark
-Compatible with both Python 2.7 and Python 3.x
+Generate benchmark input data for ArcGIS performance tests.
+
+The generator now prefers a cached OSM sample extract, converts the selected
+layers into a file geodatabase, and then derives the benchmark-ready feature
+classes and rasters from that local cache. If OSM preparation fails, it falls
+back to deterministic synthetic data so the benchmark can still run.
 """
 from __future__ import print_function, division, absolute_import
+
+import copy
 import os
+import random
 import sys
-import time
-import shutil
+from datetime import datetime
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import arcpy
 from config import settings
-from utils.timer import ProgressHeartbeat
-from utils.raster_utils import create_constant_raster, spatial_analyst_available
-from utils.benchmark_shapes import factor_grid_dimensions
+from utils.benchmark_manifest import load_manifest, save_manifest
+from utils.benchmark_shapes import factor_grid_dimensions, derive_block_size, build_block_pattern_array
+from utils.gis_cleanup import clear_workspace_cache, remove_dataset_artifacts
+from utils.osm_samples import ensure_osm_sample_cache
+from utils.raster_utils import create_constant_raster, create_block_pattern_raster
+
+try:
+    import arcpy
+    HAS_ARCPY = True
+except ImportError:
+    HAS_ARCPY = False
+    arcpy = None
+
+
+MANIFEST_VERSION = 2
+PROJECTED_WKID = 3857
+COMMON_ID_FIELDS = [
+    ('poly_id', 'LONG'),
+    ('group_id', 'LONG'),
+    ('class_id', 'LONG'),
+    ('priority', 'LONG'),
+    ('weight', 'DOUBLE'),
+    ('source_tag', 'TEXT', 64),
+    ('osm_source', 'TEXT', 64),
+]
+
+OSM_LAYER_TARGETS = [
+    ('roads', 'osm_roads'),
+    ('buildings', 'osm_buildings'),
+    ('landuse', 'osm_landuse'),
+    ('pois', 'osm_pois'),
+    ('places', 'osm_places'),
+]
+
+
+def _ensure_dir(path):
+    if path and not os.path.exists(path):
+        os.makedirs(path)
+    return path
+
+
+def _safe_text(value):
+    if value is None:
+        return u""
+    try:
+        if isinstance(value, bytes):
+            return value.decode('utf-8', 'replace')
+    except Exception:
+        pass
+    return unicode(value) if hasattr(__builtins__, 'unicode') else str(value)
+
+
+def _delete_path(path):
+    if not path:
+        return
+    try:
+        remove_dataset_artifacts(path)
+    except Exception:
+        pass
+    try:
+        if os.path.isdir(path):
+            import shutil
+            shutil.rmtree(path, ignore_errors=True)
+        elif os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def _extent_values(extent):
+    if extent is None:
+        return None
+    try:
+        return (
+            float(extent.XMin),
+            float(extent.YMin),
+            float(extent.XMax),
+            float(extent.YMax),
+        )
+    except Exception:
+        pass
+    if isinstance(extent, (list, tuple)) and len(extent) >= 4:
+        return float(extent[0]), float(extent[1]), float(extent[2]), float(extent[3])
+    return None
+
+
+def _extent_dict(extent):
+    values = _extent_values(extent)
+    if not values:
+        return {}
+    xmin, ymin, xmax, ymax = values
+    return {
+        'xmin': xmin,
+        'ymin': ymin,
+        'xmax': xmax,
+        'ymax': ymax,
+    }
+
+
+def _square_extent_from_extents(extents, margin_ratio=0.05, default_side=1000000.0):
+    """Return a square extent that covers the supplied extents."""
+    x_mins = []
+    y_mins = []
+    x_maxs = []
+    y_maxs = []
+    for extent in extents or []:
+        values = _extent_values(extent)
+        if not values:
+            continue
+        xmin, ymin, xmax, ymax = values
+        x_mins.append(xmin)
+        y_mins.append(ymin)
+        x_maxs.append(xmax)
+        y_maxs.append(ymax)
+
+    if not x_mins:
+        half = float(default_side) / 2.0
+        return -half, -half, half, half
+
+    xmin = min(x_mins)
+    ymin = min(y_mins)
+    xmax = max(x_maxs)
+    ymax = max(y_maxs)
+    width = xmax - xmin
+    height = ymax - ymin
+    side = max(width, height)
+    side = side * (1.0 + float(margin_ratio) * 2.0)
+    if side <= 0:
+        side = float(default_side)
+
+    cx = (xmin + xmax) / 2.0
+    cy = (ymin + ymax) / 2.0
+    half = side / 2.0
+    return cx - half, cy - half, cx + half, cy + half
+
+
+def _feature_count(path):
+    if not HAS_ARCPY or not path or not arcpy.Exists(path):
+        return 0
+    try:
+        return int(arcpy.GetCount_management(path)[0])
+    except Exception:
+        return 0
+
+
+def _raster_size(path):
+    if not HAS_ARCPY or not path:
+        return None
+    if not arcpy.Exists(path) and not os.path.exists(path):
+        return None
+    try:
+        desc = arcpy.Describe(path)
+        return int(getattr(desc, 'width', 0) or 0), int(getattr(desc, 'height', 0) or 0)
+    except Exception:
+        if os.path.exists(path):
+            try:
+                desc = arcpy.Describe(path)
+                return int(getattr(desc, 'width', 0) or 0), int(getattr(desc, 'height', 0) or 0)
+            except Exception:
+                pass
+        return None
+
+
+def _projected_spatial_reference():
+    try:
+        return arcpy.SpatialReference(PROJECTED_WKID)
+    except Exception:
+        return arcpy.SpatialReference(getattr(settings, 'SPATIAL_REFERENCE', 4326))
+
+
+def _create_feature_class(output_fc, geometry_type, spatial_reference):
+    _delete_path(output_fc)
+    arcpy.CreateFeatureclass_management(
+        out_path=os.path.dirname(output_fc),
+        out_name=os.path.basename(output_fc),
+        geometry_type=geometry_type,
+        spatial_reference=spatial_reference
+    )
+    return output_fc
+
+
+def _add_common_fields(feature_class):
+    existing = {field.name.lower() for field in arcpy.ListFields(feature_class)}
+    for field_spec in COMMON_ID_FIELDS:
+        name = field_spec[0]
+        if name.lower() in existing:
+            continue
+        field_type = field_spec[1]
+        length = field_spec[2] if len(field_spec) > 2 else None
+        if field_type == 'TEXT':
+            arcpy.AddField_management(feature_class, name, field_type, field_length=length or 64)
+        else:
+            arcpy.AddField_management(feature_class, name, field_type)
+
+
+def _populate_common_fields(feature_class, source_tag, osm_source, field_name='poly_id'):
+    fields = [field_name, 'group_id', 'class_id', 'priority', 'weight', 'source_tag', 'osm_source']
+    with arcpy.da.UpdateCursor(feature_class, fields) as cursor:
+        for index, row in enumerate(cursor, start=1):
+            row[0] = index
+            row[1] = ((index - 1) % 64) + 1
+            row[2] = ((index - 1) % 11) + 1
+            row[3] = ((index - 1) % 7) + 1
+            row[4] = round((((index - 1) % 100) + 1) / 100.0, 4)
+            row[5] = source_tag
+            row[6] = osm_source
+            cursor.updateRow(row)
+
+
+def _project_source_layer(source_path, output_fc, spatial_reference):
+    if not source_path or not os.path.exists(source_path):
+        raise RuntimeError("Missing source shapefile: {}".format(source_path))
+    _delete_path(output_fc)
+    arcpy.Project_management(source_path, output_fc, spatial_reference)
+    return output_fc
+
+
+def _collect_extents(feature_classes):
+    extents = []
+    for fc in feature_classes or []:
+        if not fc or not arcpy.Exists(fc):
+            continue
+        try:
+            desc = arcpy.Describe(fc)
+            extents.append(desc.extent)
+        except Exception:
+            pass
+    return extents
+
+
+def _create_boundary(feature_class, extent, source_mode, source_label):
+    _create_feature_class(feature_class, 'POLYGON', _projected_spatial_reference())
+    _add_common_fields(feature_class)
+    array = arcpy.Array([
+        arcpy.Point(extent[0], extent[1]),
+        arcpy.Point(extent[0], extent[3]),
+        arcpy.Point(extent[2], extent[3]),
+        arcpy.Point(extent[2], extent[1]),
+        arcpy.Point(extent[0], extent[1]),
+    ])
+    polygon = arcpy.Polygon(array, _projected_spatial_reference())
+    with arcpy.da.InsertCursor(feature_class, ['SHAPE@', 'poly_id', 'group_id', 'class_id', 'priority', 'weight', 'source_tag', 'osm_source']) as cursor:
+        cursor.insertRow([polygon, 1, 1, 1, 1, 1.0, source_mode, source_label])
+    return feature_class
+
+
+def _create_fishnet(feature_class, extent, rows, cols, source_mode, source_label, offset=False):
+    _delete_path(feature_class)
+    spatial_reference = _projected_spatial_reference()
+    xmin, ymin, xmax, ymax = extent
+    width = float(xmax - xmin)
+    height = float(ymax - ymin)
+    cell_width = width / float(cols)
+    cell_height = height / float(rows)
+    if offset:
+        xmin = xmin + (cell_width / 2.0)
+        ymin = ymin + (cell_height / 2.0)
+        xmax = xmax + (cell_width / 2.0)
+        ymax = ymax + (cell_height / 2.0)
+    arcpy.CreateFishnet_management(
+        out_feature_class=feature_class,
+        origin_coord="{} {}".format(xmin, ymin),
+        y_axis_coord="{} {}".format(xmin, ymin + 10.0),
+        cell_width=cell_width,
+        cell_height=cell_height,
+        number_rows=rows,
+        number_columns=cols,
+        corner_coord="{} {}".format(xmax, ymax),
+        labels="NO_LABELS",
+        template="",
+        geometry_type="POLYGON"
+    )
+    try:
+        arcpy.DefineProjection_management(feature_class, spatial_reference)
+    except Exception:
+        pass
+    _add_common_fields(feature_class)
+    _populate_common_fields(feature_class, source_mode, source_label)
+    return feature_class
+
+
+def _point_geometry_from_source(geometry):
+    if geometry is None:
+        return None
+    try:
+        if geometry.type.lower() == 'point':
+            first_point = geometry.firstPoint
+            if first_point is not None:
+                return arcpy.Point(first_point.X, first_point.Y)
+            centroid = geometry.centroid
+            return arcpy.Point(centroid.X, centroid.Y) if centroid else None
+        centroid = geometry.centroid
+        return arcpy.Point(centroid.X, centroid.Y) if centroid else None
+    except Exception:
+        try:
+            point = geometry.labelPoint
+            return arcpy.Point(point.X, point.Y) if point else None
+        except Exception:
+            return None
+
+
+def _jitter_point(point, index, extent, magnitude):
+    if point is None:
+        return None
+    xmin, ymin, xmax, ymax = extent
+    dx = ((index % 13) - 6) * magnitude
+    dy = (((index // 13) % 13) - 6) * magnitude
+    x = min(max(point.X + dx, xmin + 1.0), xmax - 1.0)
+    y = min(max(point.Y + dy, ymin + 1.0), ymax - 1.0)
+    return arcpy.Point(x, y)
+
+
+def _create_point_sample(feature_class, source_geometries, target_count, extent, source_mode, source_label, jitter_meters=50.0):
+    _delete_path(feature_class)
+    spatial_reference = _projected_spatial_reference()
+    _create_feature_class(feature_class, 'POINT', spatial_reference)
+    _add_common_fields(feature_class)
+
+    geometries = []
+    for geom in source_geometries or []:
+        point = _point_geometry_from_source(geom)
+        if point is not None:
+            geometries.append(point)
+
+    if not geometries:
+        geometries = [None]
+
+    xmin, ymin, xmax, ymax = extent
+    rng = random.Random(42 + int(target_count))
+
+    with arcpy.da.InsertCursor(feature_class, ['SHAPE@', 'poly_id', 'group_id', 'class_id', 'priority', 'weight', 'source_tag', 'osm_source']) as cursor:
+        for index in range(1, int(target_count) + 1):
+            source_point = geometries[(index - 1) % len(geometries)]
+            if source_point is None:
+                x = rng.uniform(xmin + 1.0, xmax - 1.0)
+                y = rng.uniform(ymin + 1.0, ymax - 1.0)
+                point = arcpy.Point(x, y)
+            else:
+                point = _jitter_point(source_point, index, extent, jitter_meters) or source_point
+            cursor.insertRow([
+                arcpy.PointGeometry(point, spatial_reference),
+                index,
+                ((index - 1) % 64) + 1,
+                ((index - 1) % 11) + 1,
+                ((index - 1) % 7) + 1,
+                round((((index - 1) % 100) + 1) / 100.0, 4),
+                source_mode,
+                source_label
+            ])
+    return feature_class
+
+
+def _create_polygon_sample(feature_class, source_geometries, target_count, extent, source_mode, source_label):
+    _delete_path(feature_class)
+    spatial_reference = _projected_spatial_reference()
+    _create_feature_class(feature_class, 'POLYGON', spatial_reference)
+    _add_common_fields(feature_class)
+
+    geometries = []
+    for geom in source_geometries or []:
+        if geom is not None:
+            geometries.append(geom)
+
+    if not geometries:
+        geometries = [None]
+
+    xmin, ymin, xmax, ymax = extent
+    size = max(25.0, min(xmax - xmin, ymax - ymin) / 250.0)
+    rng = random.Random(1729 + int(target_count))
+
+    with arcpy.da.InsertCursor(feature_class, ['SHAPE@', 'poly_id', 'group_id', 'class_id', 'priority', 'weight', 'source_tag', 'osm_source']) as cursor:
+        for index in range(1, int(target_count) + 1):
+            source_geom = geometries[(index - 1) % len(geometries)]
+            if source_geom is None:
+                x = rng.uniform(xmin + size, xmax - size)
+                y = rng.uniform(ymin + size, ymax - size)
+                array = arcpy.Array([
+                    arcpy.Point(x - size, y - size),
+                    arcpy.Point(x - size, y + size),
+                    arcpy.Point(x + size, y + size),
+                    arcpy.Point(x + size, y - size),
+                    arcpy.Point(x - size, y - size),
+                ])
+                geometry = arcpy.Polygon(array, spatial_reference)
+            else:
+                geometry = source_geom
+            cursor.insertRow([
+                geometry,
+                index,
+                ((index - 1) % 64) + 1,
+                ((index - 1) % 11) + 1,
+                ((index - 1) % 7) + 1,
+                round((((index - 1) % 100) + 1) / 100.0, 4),
+                source_mode,
+                source_label
+            ])
+    return feature_class
+
+
+def _create_random_points(feature_class, target_count, extent, source_mode, source_label):
+    _delete_path(feature_class)
+    spatial_reference = _projected_spatial_reference()
+    _create_feature_class(feature_class, 'POINT', spatial_reference)
+    _add_common_fields(feature_class)
+
+    xmin, ymin, xmax, ymax = extent
+    rng = random.Random(31415 + int(target_count))
+    with arcpy.da.InsertCursor(feature_class, ['SHAPE@', 'poly_id', 'group_id', 'class_id', 'priority', 'weight', 'source_tag', 'osm_source']) as cursor:
+        for index in range(1, int(target_count) + 1):
+            x = rng.uniform(xmin + 1.0, xmax - 1.0)
+            y = rng.uniform(ymin + 1.0, ymax - 1.0)
+            cursor.insertRow([
+                arcpy.PointGeometry(arcpy.Point(x, y), spatial_reference),
+                index,
+                ((index - 1) % 64) + 1,
+                ((index - 1) % 11) + 1,
+                ((index - 1) % 7) + 1,
+                round((((index - 1) % 100) + 1) / 100.0, 4),
+                source_mode,
+                source_label
+            ])
+    return feature_class
+
+
+def _create_rasters(root_dir, extent, source_mode, source_label, raster_config):
+    """Create the baseline and analysis rasters."""
+    side_extent = extent
+    sr = _projected_spatial_reference()
+    constant_size = int(raster_config['constant_raster_size'])
+    analysis_size = int(raster_config['analysis_raster_size'])
+    constant_path = os.path.join(root_dir, "constant_raster.tif")
+    analysis_path = os.path.join(root_dir, "analysis_raster.tif")
+
+    if not side_extent:
+        half = float(max(constant_size, analysis_size) * 1000.0) / 2.0
+        side_extent = (-half, -half, half, half)
+
+    create_constant_raster(
+        constant_path,
+        cell_size=max(1.0, float(side_extent[2] - side_extent[0]) / float(constant_size)),
+        extent=side_extent,
+        value=1,
+        spatial_reference=sr,
+        use_spatial_analyst=False
+    )
+
+    block_size = derive_block_size(analysis_size, target_blocks_per_side=60, min_block_size=8)
+    create_block_pattern_raster(
+        analysis_path,
+        cell_size=max(1.0, float(side_extent[2] - side_extent[0]) / float(analysis_size)),
+        extent=side_extent,
+        block_size=block_size,
+        levels=8,
+        spatial_reference=sr
+    )
+
+    return constant_path, analysis_path, block_size
+
+
+def _load_geometry_samples(feature_class, limit=None):
+    geometries = []
+    if not feature_class or not arcpy.Exists(feature_class):
+        return geometries
+    fields = ['SHAPE@']
+    with arcpy.da.SearchCursor(feature_class, fields) as cursor:
+        for index, row in enumerate(cursor):
+            if limit is not None and index >= int(limit):
+                break
+            if row and row[0] is not None:
+                geometries.append(row[0])
+    return geometries
 
 
 class TestDataGenerator(object):
-    """Generate test data for performance benchmarks"""
-    
+    """Generate benchmark input data and cache metadata."""
+
     def __init__(self):
-        self.data_dir = settings.DATA_DIR
-        if hasattr(settings, 'get_default_gdb_name'):
-            self.gdb_name = settings.get_default_gdb_name()
-        else:
-            self.gdb_name = os.path.basename(settings.DEFAULT_GDB_NAME)
+        self.scale = settings.DATA_SCALE
+        self.vector_config = copy.deepcopy(settings.VECTOR_CONFIG)
+        self.raster_config = copy.deepcopy(settings.RASTER_CONFIG)
+        if str(self.scale).lower() == 'standard':
+            # standard 允许按测试项覆盖输入规模，这里把覆盖后的关键字段映射回
+            # 实际生成的输入图层，以便生成/复用校验保持一致。
+            v3 = settings.get_vector_config_for_test('V3')
+            v4 = settings.get_vector_config_for_test('V4')
+            v5 = settings.get_vector_config_for_test('V5')
+            v6 = settings.get_vector_config_for_test('V6')
+            self.vector_config['buffer_points'] = int(v3.get('buffer_points', self.vector_config.get('buffer_points', 0)))
+            self.vector_config['intersect_features_a'] = int(v4.get('intersect_features_a', self.vector_config.get('intersect_features_a', 0)))
+            self.vector_config['intersect_features_b'] = int(v4.get('intersect_features_b', self.vector_config.get('intersect_features_b', 0)))
+            self.vector_config['spatial_join_points'] = int(v5.get('spatial_join_points', self.vector_config.get('spatial_join_points', 0)))
+            self.vector_config['spatial_join_polygons'] = int(v5.get('spatial_join_polygons', self.vector_config.get('spatial_join_polygons', 0)))
+            self.vector_config['calculate_field_records'] = int(v6.get('calculate_field_records', self.vector_config.get('calculate_field_records', 0)))
 
-        if hasattr(settings, 'get_default_gdb_path'):
-            self.gdb_path = settings.get_default_gdb_path()
-        else:
-            self.gdb_path = os.path.join(self.data_dir, self.gdb_name)
-        self.spatial_ref = arcpy.SpatialReference(settings.SPATIAL_REFERENCE)
-        self.vector_config = settings.VECTOR_CONFIG
-        self.raster_config = settings.RASTER_CONFIG
-        
-        # Ensure data directory exists
-        if not os.path.exists(self.data_dir):
-            os.makedirs(self.data_dir)
-    
-    def _safe_delete_gdb(self, gdb_path):
-        """Safely delete geodatabase with retry logic"""
-        if not arcpy.Exists(gdb_path):
-            return True
-        
-        print("[准备] 删除现有数据库...")
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                arcpy.Delete_management(gdb_path)
-                time.sleep(0.5)
-                if not arcpy.Exists(gdb_path):
-                    return True
-            except Exception as e:
-                print("  警告: 删除尝试 {} 失败: {}".format(attempt + 1, str(e)[:50]))
-                time.sleep(1)
-        
-        # Try shutil as fallback
-        try:
-            shutil.rmtree(gdb_path, ignore_errors=True)
-            time.sleep(0.5)
-            if not os.path.exists(gdb_path):
-                return True
-        except:
-            pass
-        
-        return False
-    
-    def check_existing_data(self):
-        """Check if existing data matches current scale requirements"""
-        if not arcpy.Exists(self.gdb_path):
-            print("  数据库不存在，需要生成")
-            return False
-        
-        print("  发现现有数据库，检查数据完整性...")
-        arcpy.env.workspace = self.gdb_path
-        
-        # Define expected datasets and their expected counts
-        checks = [
-            ("fishnet", "polygon", self.vector_config['fishnet_rows'] * self.vector_config['fishnet_cols']),
-            ("random_points", "point", self.vector_config['random_points']),
-            ("buffer_points", "point", self.vector_config['buffer_points']),
-            ("test_polygons_a", "polygon", self.vector_config['intersect_features_a']),
-            ("test_polygons_b", "polygon", self.vector_config['intersect_features_b']),
-            ("spatial_join_points", "point", self.vector_config['spatial_join_points']),
-            ("spatial_join_polygons", "polygon", self.vector_config.get('spatial_join_polygons', 0)),
-            ("calculate_field_fc", "polygon", self.vector_config['calculate_field_records']),
+            # analysis_raster.tif 主要供混合项与回退逻辑使用，按 M2 口径对齐。
+            m2 = settings.get_raster_config_for_test('M2')
+            if isinstance(m2, dict) and m2:
+                self.raster_config['analysis_raster_size'] = int(m2.get('analysis_raster_size', self.raster_config.get('analysis_raster_size', 0)))
+        self.root_dir = os.path.abspath(settings.DATA_DIR)
+        self.gdb_name = getattr(settings, 'DEFAULT_GDB_NAME', 'benchmark_data.gdb')
+        self.gdb_path = os.path.join(self.root_dir, self.gdb_name)
+        self.manifest_path = os.path.join(self.root_dir, getattr(settings, 'BENCHMARK_MANIFEST_NAME', 'benchmark_manifest.json'))
+
+    def _required_paths(self):
+        return [
+            self.gdb_path,
+            os.path.join(self.gdb_path, 'analysis_boundary'),
+            os.path.join(self.root_dir, 'constant_raster.tif'),
+            os.path.join(self.root_dir, 'analysis_raster.tif'),
         ]
-        
-        all_valid = True
-        for dataset_name, expected_type, expected_count in checks:
-            try:
-                if not arcpy.Exists(dataset_name):
-                    print("    [缺失] {}".format(dataset_name))
-                    all_valid = False
-                    continue
-                
-                # Deterministic synthetic inputs should match exactly.
-                actual_count = int(arcpy.GetCount_management(dataset_name)[0])
 
-                if actual_count == expected_count:
-                    print("    [OK] {}: {} {} (符合要求)".format(dataset_name, actual_count, expected_type))
-                else:
-                    print("    [不符] {}: {} vs 期望 {}".format(dataset_name, actual_count, expected_count))
-                    all_valid = False
-                    
-            except Exception as e:
-                print("    [错误] {}: {}".format(dataset_name, str(e)[:50]))
-                all_valid = False
-        
-        # Check raster (now saved as file instead of in GDB)
-        try:
-            raster_path = os.path.join(self.data_dir, "constant_raster.tif")
-            if arcpy.Exists(raster_path):
-                desc = arcpy.Describe(raster_path)
-                expected_size = self.raster_config['constant_raster_size']
-                min_value = float(arcpy.GetRasterProperties_management(raster_path, "MINIMUM")[0])
-                max_value = float(arcpy.GetRasterProperties_management(raster_path, "MAXIMUM")[0])
-                extent = desc.extent
-                extent_ok = (
-                    abs(float(extent.XMin) - 0.0) < 1e-6 and
-                    abs(float(extent.YMin) - 0.0) < 1e-6 and
-                    abs(float(extent.XMax) - float(expected_size)) < 1e-6 and
-                    abs(float(extent.YMax) - float(expected_size)) < 1e-6
-                )
-                if (
-                    desc.width == expected_size and
-                    desc.height == expected_size and
-                    abs(float(desc.meanCellWidth) - 1.0) < 1e-6 and
-                    abs(float(desc.meanCellHeight) - 1.0) < 1e-6 and
-                    min_value == 1.0 and
-                    max_value == 1.0 and
-                    extent_ok
-                ):
-                    print("    [OK] constant_raster: {}x{} (符合要求)".format(desc.width, desc.height))
-                else:
-                    print("    [不符] constant_raster: {}x{} vs 期望 {}x{}".format(
-                        desc.width, desc.height, expected_size, expected_size))
-                    all_valid = False
-            else:
-                print("    [缺失] constant_raster")
-                all_valid = False
-        except Exception as e:
-            print("    [错误] constant_raster: {}".format(str(e)[:50]))
-            all_valid = False
-        
-        if all_valid:
-            print("  [OK] 现有数据完整，跳过生成步骤")
-        else:
-            print("  [需要] 数据不完整或规模不符，将重新生成")
-        
-        return all_valid
-    
-    def setup_workspace(self):
-        """Create file geodatabase"""
-        print("\n" + "=" * 60)
-        print("[步骤 1/8] 准备工作空间")
-        print("=" * 60)
-        print("  数据目录: {}".format(self.data_dir))
-        print("  数据库名: {}".format(self.gdb_name))
-        print("  空间参考: WGS84 (EPSG:4326)")
-        
-        # Delete existing if present
-        print("  检查并清理旧数据库...")
-        self._safe_delete_gdb(self.gdb_path)
-        
-        # If still exists, use timestamped name
-        if os.path.exists(self.gdb_path):
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            self.gdb_name = 'benchmark_data_{}.gdb'.format(timestamp)
-            self.gdb_path = os.path.join(self.data_dir, self.gdb_name)
-            print("使用新数据库名: {}".format(self.gdb_name))
-        
-        # Create new geodatabase
-        print("  创建文件地理数据库...")
-        arcpy.CreateFileGDB_management(self.data_dir, self.gdb_name)
-        arcpy.env.workspace = self.gdb_path
-        arcpy.env.overwriteOutput = True
-        
-        print("  [OK] 数据库创建成功: {}".format(self.gdb_path))
-        return self.gdb_path
-    
-    def create_fishnet(self):
-        """V1: Create fishnet polygon"""
-        print("\n[步骤 2/8] 创建渔网多边形 (V1)")
-        print("-" * 60)
-        rows = self.vector_config['fishnet_rows']
-        cols = self.vector_config['fishnet_cols']
-        print("  参数: {} 行 x {} 列".format(rows, cols))
-        print("  预计生成: {} 个多边形".format(rows * cols))
-        print("  正在执行 CreateFishnet_management...")
-        
-        origin = "0 0"
-        yaxis = "0 1"
-        corner = "{} {}".format(cols * 10, rows * 10)
-        cell = "10 10"
-        
-        arcpy.CreateFishnet_management(
-            out_feature_class="fishnet",
-            origin_coord=origin,
-            y_axis_coord=yaxis,
-            cell_width=10,
-            cell_height=10,
-            number_rows=rows,
-            number_columns=cols,
-            corner_coord=corner,
-            labels="NO_LABELS",
-            template="#",
-            geometry_type="POLYGON"
-        )
-        print("  定义投影...")
-        arcpy.DefineProjection_management("fishnet", self.spatial_ref)
-        
-        count = int(arcpy.GetCount_management("fishnet")[0])
-        print("  [OK] 完成: {} 个多边形 ({}x{})".format(count, rows, cols))
-        return "fishnet"
-    
-    def create_random_points(self):
-        """V2: Create random points"""
-        print("\n[步骤 3/8] 生成随机点 (V2)")
-        print("-" * 60)
-        num_points = self.vector_config['random_points']
-        print("  参数: {} 个随机点".format(num_points))
-        print("  正在创建范围要素类...")
-        
-        # Create extent feature
-        arcpy.CreateFishnet_management(
-            out_feature_class="extent",
-            origin_coord="0 0",
-            y_axis_coord="0 1",
-            cell_width=0,
-            cell_height=0,
-            number_rows=1,
-            number_columns=1,
-            corner_coord="{} {}".format(
-                self.vector_config['fishnet_cols'] * 10,
-                self.vector_config['fishnet_rows'] * 10
-            ),
-            labels="NO_LABELS",
-            geometry_type="POLYGON"
-        )
-        arcpy.DefineProjection_management("extent", self.spatial_ref)
-        
-        # Create random points
-        print("  正在生成随机点 (这可能需要一些时间)...")
-        arcpy.CreateRandomPoints_management(
-            out_path=self.gdb_path,
-            out_name="random_points",
-            constraining_feature_class="extent",
-            number_of_points_or_field=num_points
-        )
-        
-        count = int(arcpy.GetCount_management("random_points")[0])
-        print("  [OK] 完成: {} 个点".format(count))
-        
-        # Clean up
-        print("  清理临时数据...")
-        arcpy.Delete_management("extent")
-        print("  [OK] 临时数据已清理")
-        return "random_points"
-    
-    def create_buffer_data(self):
-        """V3: Create data for buffer test"""
-        print("\n[步骤 4/8] 创建缓冲区测试数据 (V3)")
-        print("-" * 60)
-        num_points = self.vector_config['buffer_points']
-        print("  参数: {} 个点要素".format(num_points))
-        print("  计算网格布局...")
-        
-        # Create points along a line pattern
-        points = []
-        step = int((self.vector_config['fishnet_cols'] * 10) / (num_points ** 0.5))
-        if step < 1:
-            step = 1
-        
-        rows, cols = factor_grid_dimensions(num_points)
-        for i in range(rows):
-            for j in range(cols):
-                x = i * step + 5
-                y = j * step + 5
-                points.append((x, y))
-        
-        # Create point feature class
-        print("  创建点要素类...")
-        arcpy.CreateFeatureclass_management(
-            self.gdb_path,
-            "buffer_points",
-            "POINT",
-            spatial_reference=self.spatial_ref
-        )
-        
-        print("  正在插入 {} 个点...".format(num_points))
-        batch_size = max(1, num_points // 10)
-        inserted = 0
-        with arcpy.da.InsertCursor("buffer_points", ["SHAPE@XY"]) as cursor:
-            for x, y in points[:num_points]:
-                cursor.insertRow([(x, y)])
-                inserted += 1
-                if inserted % batch_size == 0:
-                    progress = int(inserted * 100 / num_points)
-                    print("    进度: {}/{} ({}%)".format(inserted, num_points, progress))
-        
-        count = int(arcpy.GetCount_management("buffer_points")[0])
-        print("  [OK] 完成: {} 个点".format(count))
-        return "buffer_points"
-    
-    def create_intersect_data(self):
-        """V4: Create data for intersect test"""
-        print("\n[步骤 5/8] 创建叠加分析测试数据 (V4)")
-        print("-" * 60)
-        num_a = self.vector_config['intersect_features_a']
-        num_b = self.vector_config['intersect_features_b']
-        print("  参数: 图层A={} 个多边形, 图层B={} 个多边形".format(num_a, num_b))
-        
-        # Create grid A
-        rows_a, cols_a = factor_grid_dimensions(num_a)
-        print("  创建图层A (渔网 {}x{})...".format(rows_a, cols_a))
-        arcpy.CreateFishnet_management(
-            out_feature_class="test_polygons_a",
-            origin_coord="0 0",
-            y_axis_coord="0 1",
-            cell_width=20,
-            cell_height=20,
-            number_rows=rows_a,
-            number_columns=cols_a,
-            corner_coord="{} {}".format(
-                cols_a * 20,
-                rows_a * 20
-            ),
-            labels="NO_LABELS",
-            geometry_type="POLYGON"
-        )
-        print("  定义投影并添加字段...")
-        arcpy.DefineProjection_management("test_polygons_a", self.spatial_ref)
-        arcpy.AddField_management("test_polygons_a", "poly_id", "LONG")
-        # Use CalculateField instead of cursor for better performance
-        try:
-            desc_a = arcpy.Describe("test_polygons_a")
-            arcpy.CalculateField_management("test_polygons_a", "poly_id", "!{}!".format(desc_a.OIDFieldName), "PYTHON3")
-            print("    poly_id 字段填充完成")
-        except:
-            # Fallback to cursor for compatibility
-            desc_a = arcpy.Describe("test_polygons_a")
-            with arcpy.da.UpdateCursor("test_polygons_a", [desc_a.OIDFieldName, "poly_id"]) as cursor:
-                for row in cursor:
-                    row[1] = row[0]
-                    cursor.updateRow(row)
-        
-        # Create offset grid B
-        rows_b, cols_b = factor_grid_dimensions(num_b)
-        print("  创建图层B (偏移渔网 {}x{})...".format(rows_b, cols_b))
-        arcpy.CreateFishnet_management(
-            out_feature_class="test_polygons_b",
-            origin_coord="10 10",
-            y_axis_coord="10 11",
-            cell_width=20,
-            cell_height=20,
-            number_rows=rows_b,
-            number_columns=cols_b,
-            corner_coord="{} {}".format(
-                cols_b * 20 + 10,
-                rows_b * 20 + 10
-            ),
-            labels="NO_LABELS",
-            geometry_type="POLYGON"
-        )
-        print("  定义投影...")
-        arcpy.DefineProjection_management("test_polygons_b", self.spatial_ref)
-        
-        count_a = int(arcpy.GetCount_management("test_polygons_a")[0])
-        count_b = int(arcpy.GetCount_management("test_polygons_b")[0])
-        print("  [OK] 完成: A={} 个多边形, B={} 个多边形".format(count_a, count_b))
-        return "test_polygons_a", "test_polygons_b"
-    
-    def create_spatial_join_data(self):
-        """V5: Create data for spatial join"""
-        print("\n[步骤 6/8] 创建空间连接测试数据 (V5)")
-        print("-" * 60)
-        num_points = self.vector_config['spatial_join_points']
-        num_polygons = self.vector_config.get('spatial_join_polygons', 10000)
-        print("  参数: {} 个点要素, {} 个多边形".format(num_points, num_polygons))
-        
-        # Create a smaller grid for spatial join instead of copying full fishnet
-        # This avoids the slow update cursor on millions of records
-        print("  创建独立的多边形网格 ({} 个)...".format(num_polygons))
-        grid_rows, grid_cols = factor_grid_dimensions(num_polygons)
-        
-        # 使用有效的地理坐标范围，避免 WGS84 下出现非简单几何
-        origin_x = -180.0
-        origin_y = -90.0
-        total_width = 360.0
-        total_height = 180.0
-        cell_width = total_width / grid_cols
-        cell_height = total_height / grid_rows
+    def _generated_dataset_paths(self):
+        names = [
+            'analysis_boundary',
+            'buffer_points',
+            'spatial_join_points',
+            'spatial_join_polygons',
+            'calculate_field_fc',
+            'test_polygons_a',
+            'test_polygons_b',
+            'osm_roads',
+            'osm_buildings',
+            'osm_landuse',
+            'osm_pois',
+            'osm_places',
+        ]
+        return [os.path.join(self.gdb_path, name) for name in names]
 
-        arcpy.CreateFishnet_management(
-            out_feature_class="spatial_join_polygons",
-            origin_coord="{} {}".format(origin_x, origin_y),
-            y_axis_coord="{} {}".format(origin_x, origin_y + 1.0),
-            cell_width=cell_width,
-            cell_height=cell_height,
-            number_rows=grid_rows,
-            number_columns=grid_cols,
-            corner_coord="{} {}".format(origin_x + total_width, origin_y + total_height),
-            labels="NO_LABELS",
-            geometry_type="POLYGON"
-        )
-        arcpy.DefineProjection_management("spatial_join_polygons", self.spatial_ref)
-        
-        # Add poly_id field using CalculateField (much faster than cursor)
-        print("  添加并填充 poly_id 字段...")
-        arcpy.AddField_management("spatial_join_polygons", "poly_id", "LONG")
-        # Use OID as poly_id - much faster than cursor update
-        desc = arcpy.Describe("spatial_join_polygons")
-        oid_field = desc.OIDFieldName
-        try:
-            # Try using CalculateField which is much faster
-            arcpy.CalculateField_management("spatial_join_polygons", "poly_id", "!{}!".format(oid_field), "PYTHON3")
-            print("    使用 CalculateField 快速填充完成")
-        except:
-            # Fallback: use cursor for small datasets only
-            updated = 0
-            batch_size = max(1, num_polygons // 10)
-            with arcpy.da.UpdateCursor("spatial_join_polygons", [oid_field, "poly_id"]) as cursor:
-                for row in cursor:
-                    row[1] = row[0]
-                    cursor.updateRow(row)
-                    updated += 1
-                    if updated % batch_size == 0:
-                        print("    已更新 {} 条记录...".format(updated))
-        
-        # Create random points within the polygons extent (not fishnet extent)
-        # Use the same extent as spatial_join_polygons for consistency
-        print("  获取多边形范围...")
-        desc = arcpy.Describe("spatial_join_polygons")
-        extent = desc.extent
-        x_min, y_min, x_max, y_max = extent.XMin, extent.YMin, extent.XMax, extent.YMax
-        print("  范围: X={:.2f}~{:.2f}, Y={:.2f}~{:.2f}".format(x_min, x_max, y_min, y_max))
-        
-        print("  创建点要素类...")
-        arcpy.CreateFeatureclass_management(
-            self.gdb_path,
-            "spatial_join_points",
-            "POINT",
-            spatial_reference=self.spatial_ref
-        )
-        
-        print("  正在生成 {} 个随机点...".format(num_points))
-        import random
-        random.seed(42)
-        batch_size = max(1, num_points // 10)
-        inserted = 0
-        with arcpy.da.InsertCursor("spatial_join_points", ["SHAPE@XY"]) as cursor:
-            for _ in range(num_points):
-                x = random.uniform(x_min, x_max)
-                y = random.uniform(y_min, y_max)
-                cursor.insertRow([(x, y)])
-                inserted += 1
-                if inserted % batch_size == 0:
-                    progress = int(inserted * 100 / num_points)
-                    print("    进度: {}/{} ({}%)".format(inserted, num_points, progress))
-        
-        count_p = int(arcpy.GetCount_management(os.path.join(self.gdb_path, "spatial_join_points"))[0])
-        count_poly = int(arcpy.GetCount_management(os.path.join(self.gdb_path, "spatial_join_polygons"))[0])
-        print("  [OK] 完成: {} 个点, {} 个多边形".format(count_p, count_poly))
-        return "spatial_join_points", "spatial_join_polygons"
-    
-    def create_calculate_field_data(self):
-        """V6: Create data for calculate field test"""
-        print("\n[步骤 7/8] 创建字段计算测试数据 (V6)")
-        print("-" * 60)
-        num_records = self.vector_config['calculate_field_records']
-        print("  参数: {} 条记录".format(num_records))
-        
-        # Create feature class for calculate field test (benchmark needs polygon feature class with poly_id)
-        print("  创建多边形要素类...")
-        arcpy.CreateFeatureclass_management(
-            self.gdb_path,
-            "calculate_field_fc",
-            "POLYGON",
-            spatial_reference=self.spatial_ref
-        )
-        # Add required fields
-        print("  添加字段 (poly_id, calc_field)...")
-        arcpy.AddField_management("calculate_field_fc", "poly_id", "LONG")
-        arcpy.AddField_management("calculate_field_fc", "calc_field", "DOUBLE")
-        
-        # Create simple polygons
-        print("  正在创建 {} 个多边形...".format(num_records))
-        grid_rows, grid_cols = factor_grid_dimensions(num_records)
-        cell_size = 10
-        batch_size = max(1, num_records // 10)
-        created = 0
-        with arcpy.da.InsertCursor("calculate_field_fc", ["SHAPE@", "poly_id", "calc_field"]) as cursor:
-            poly_id = 1
-            for i in range(grid_rows):
-                for j in range(grid_cols):
-                    if poly_id > num_records:
-                        break
-                    # Create a simple square polygon
-                    array = arcpy.Array([
-                        arcpy.Point(i * cell_size, j * cell_size),
-                        arcpy.Point((i + 1) * cell_size, j * cell_size),
-                        arcpy.Point((i + 1) * cell_size, (j + 1) * cell_size),
-                        arcpy.Point(i * cell_size, (j + 1) * cell_size),
-                        arcpy.Point(i * cell_size, j * cell_size)
-                    ])
-                    polygon = arcpy.Polygon(array)
-                    cursor.insertRow([polygon, poly_id, 0])
-                    poly_id += 1
-                    created += 1
-                    if created % batch_size == 0:
-                        progress = int(created * 100 / num_records)
-                        print("    进度: {}/{} ({}%)".format(created, num_records, progress))
-                if poly_id > num_records:
-                    break
-        
-        fc_path = os.path.join(self.gdb_path, "calculate_field_fc")
-        count = int(arcpy.GetCount_management(fc_path)[0])
-        print("  [OK] 完成: {} 条记录".format(count))
-        return "calculate_field_fc"
-    
-    def create_raster_data(self):
-        """Create raster test data using pure arcpy"""
-        print("\n[步骤 8/8] 创建栅格测试数据 (R1)")
-        print("-" * 60)
-        size = self.raster_config['constant_raster_size']
-        print("  参数: {}x{} 像素".format(size, size))
-        print("  预计大小: ~{} MB".format(int(size * size * 4 / 1024 / 1024)))
-        # Save raster as file instead of in GDB (GDB has issues with rasters)
-        raster_path = os.path.join(self.data_dir, "constant_raster.tif")
-
-        extent = "0 0 {} {}".format(size, size)
-        try:
-            create_constant_raster(
-                raster_path,
-                cell_size=1,
-                extent=extent,
-                value=1,
-                spatial_reference=self.spatial_ref,
-                use_spatial_analyst=spatial_analyst_available()
-            )
-            print("  [OK] 完成: {}x{} 栅格".format(size, size))
-            return raster_path
-        except Exception as e:
-            print("  [ERROR] {}".format(str(e)[:100]))
-            return None
-    
-    def generate_all(self, force=False):
-        """Generate all test data if not exists or doesn't match scale"""
-        print("\n" + "=" * 60)
-        print("开始检查/生成 ArcGIS 性能测试数据")
-        print("=" * 60)
-        print("数据规模: {}".format(settings.DATA_SCALE.upper()))
-        print("Python版本: {}.{}.{}".format(sys.version_info[0], sys.version_info[1], sys.version_info[2]))
-        print("数据库路径: {}".format(self.gdb_path))
-        print("=" * 60)
-        
-        # Check if we can reuse existing data
-        if not force:
-            with ProgressHeartbeat("检查现有数据"):
-                if self.check_existing_data():
-                    return True
-        
-        # Need to generate data
-        print("\n开始生成数据...")
-        
-        try:
-            step_actions = [
-                ("步骤 1/8 准备工作空间", self.setup_workspace),
-                ("步骤 2/8 创建渔网多边形 (V1)", self.create_fishnet),
-                ("步骤 3/8 生成随机点 (V2)", self.create_random_points),
-                ("步骤 4/8 创建缓冲区测试数据 (V3)", self.create_buffer_data),
-                ("步骤 5/8 创建叠加分析测试数据 (V4)", self.create_intersect_data),
-                ("步骤 6/8 创建空间连接测试数据 (V5)", self.create_spatial_join_data),
-                ("步骤 7/8 创建字段计算测试数据 (V6)", self.create_calculate_field_data),
-                ("步骤 8/8 创建栅格测试数据 (R1)", self.create_raster_data),
-            ]
-
-            for label, step_func in step_actions:
-                with ProgressHeartbeat(label):
-                    step_func()
-            
-            print("\n" + "=" * 60)
-            print("[OK] 测试数据生成成功！")
-            print("=" * 60)
-            print("数据库位置: {}".format(self.gdb_path))
-            print("包含数据:")
-            print("  - 渔网多边形 (fishnet)")
-            print("  - 随机点 (random_points)")
-            print("  - 缓冲区测试点 (buffer_points)")
-            print("  - 叠加分析多边形A/B (test_polygons_a/b)")
-            print("  - 空间连接数据 (spatial_join_points/polygons)")
-            print("  - 字段计算数据 (calculate_field_fc)")
-            print("  - 常量栅格 (constant_raster)")
-            print("=" * 60)
-            return True
-            
-        except Exception as e:
-            print("\n" + "=" * 60)
-            print("[ERROR] 测试数据生成失败！")
-            print("=" * 60)
-            print("错误信息: {}".format(str(e)))
-            import traceback
-            traceback.print_exc()
+    def _validate_existing_assets(self, manifest):
+        if not manifest or not isinstance(manifest, dict):
+            return False
+        if str(manifest.get('schema_version')) != str(MANIFEST_VERSION):
+            return False
+        if str(manifest.get('scale', '')).lower() != str(self.scale).lower():
+            return False
+        if not os.path.isdir(self.gdb_path):
+            return False
+        if not os.path.exists(os.path.join(self.gdb_path, 'analysis_boundary')):
             return False
 
+        constant_size = _raster_size(os.path.join(self.root_dir, 'constant_raster.tif'))
+        analysis_size = _raster_size(os.path.join(self.root_dir, 'analysis_raster.tif'))
+        if constant_size is None or analysis_size is None:
+            return False
+        if constant_size != (int(self.raster_config['constant_raster_size']), int(self.raster_config['constant_raster_size'])):
+            return False
+        if analysis_size != (int(self.raster_config['analysis_raster_size']), int(self.raster_config['analysis_raster_size'])):
+            return False
 
-def main():
-    """Main entry point"""
-    import argparse
-    parser = argparse.ArgumentParser(description='Generate test data for ArcGIS benchmark')
-    parser.add_argument('--force', action='store_true', 
-                        help='Force regeneration even if valid data exists')
-    args = parser.parse_args()
-    
-    generator = TestDataGenerator()
-    success = generator.generate_all(force=args.force)
-    sys.exit(0 if success else 1)
+        dataset_counts = manifest.get('dataset_counts') or {}
+        expected_counts = {
+            'buffer_points': int(self.vector_config['buffer_points']),
+            'spatial_join_points': int(self.vector_config['spatial_join_points']),
+            'spatial_join_polygons': int(self.vector_config['spatial_join_polygons']),
+            'calculate_field_fc': int(self.vector_config['calculate_field_records']),
+            'test_polygons_a': int(self.vector_config['intersect_features_a']),
+            'test_polygons_b': int(self.vector_config['intersect_features_b']),
+            'analysis_boundary': 1,
+        }
+        for name, expected_count in expected_counts.items():
+            if int(dataset_counts.get(name, -1)) != int(expected_count):
+                return False
+            path = os.path.join(self.gdb_path, name)
+            if _feature_count(path) != int(expected_count):
+                return False
+
+        return True
+
+    def _build_manifest(self, source_mode, source_info, analysis_extent, block_size, dataset_counts):
+        manifest = {
+            'schema_version': MANIFEST_VERSION,
+            'scale': self.scale,
+            'generated_at': datetime.utcnow().isoformat(),
+            'root_dir': self.root_dir,
+            'gdb_path': self.gdb_path,
+            'analysis_crs': PROJECTED_WKID,
+            'source_mode': source_mode,
+            'source_region': source_info.get('label') if source_info else 'Synthetic',
+            'osm_source': source_info or {},
+            'analysis_boundary_path': os.path.join(self.gdb_path, 'analysis_boundary'),
+            'analysis_boundary_extent': _extent_dict(analysis_extent),
+            'analysis_raster_path': os.path.join(self.root_dir, 'analysis_raster.tif'),
+            'constant_raster_path': os.path.join(self.root_dir, 'constant_raster.tif'),
+            'analysis_raster_block_size': int(block_size),
+            'vector_config': copy.deepcopy(self.vector_config),
+            'raster_config': copy.deepcopy(self.raster_config),
+            'dataset_counts': dataset_counts,
+        }
+        return manifest
+
+    def _build_from_source_layers(self, source_info):
+        print("  [OSM] Using cached source: {} ({})".format(source_info.get('label'), source_info.get('slug')))
+        projected_sr = _projected_spatial_reference()
+        source_layers = source_info.get('layers') or {}
+        imported_layers = {}
+        for source_key, target_name in OSM_LAYER_TARGETS:
+            source_path = source_layers.get(source_key)
+            if not source_path:
+                continue
+            output_fc = os.path.join(self.gdb_path, target_name)
+            try:
+                _project_source_layer(source_path, output_fc, projected_sr)
+                imported_layers[target_name] = output_fc
+                print("    imported {} -> {}".format(source_key, target_name))
+            except Exception as exc:
+                print("    warning: failed to import {}: {}".format(source_key, exc))
+
+        extents = _collect_extents(imported_layers.values())
+        analysis_extent = _square_extent_from_extents(extents, margin_ratio=0.08, default_side=1000000.0)
+        boundary_fc = os.path.join(self.gdb_path, 'analysis_boundary')
+        _create_boundary(boundary_fc, analysis_extent, 'osm', source_info.get('label', 'OSM'))
+
+        roads_fc = imported_layers.get('osm_roads')
+        buildings_fc = imported_layers.get('osm_buildings')
+        landuse_fc = imported_layers.get('osm_landuse')
+        pois_fc = imported_layers.get('osm_pois')
+        places_fc = imported_layers.get('osm_places')
+
+        buffer_points_fc = os.path.join(self.gdb_path, 'buffer_points')
+        spatial_join_points_fc = os.path.join(self.gdb_path, 'spatial_join_points')
+        spatial_join_polygons_fc = os.path.join(self.gdb_path, 'spatial_join_polygons')
+        calculate_field_fc = os.path.join(self.gdb_path, 'calculate_field_fc')
+        test_polygons_a_fc = os.path.join(self.gdb_path, 'test_polygons_a')
+        test_polygons_b_fc = os.path.join(self.gdb_path, 'test_polygons_b')
+
+        poi_geoms = _load_geometry_samples(pois_fc, limit=max(self.vector_config['buffer_points'], self.vector_config['spatial_join_points']))
+        place_geoms = _load_geometry_samples(places_fc, limit=max(self.vector_config['buffer_points'], self.vector_config['spatial_join_points']))
+        building_geoms = _load_geometry_samples(buildings_fc, limit=self.vector_config['calculate_field_records'])
+        landuse_geoms = _load_geometry_samples(landuse_fc, limit=self.vector_config['spatial_join_polygons'])
+
+        _create_point_sample(buffer_points_fc, poi_geoms or place_geoms, int(self.vector_config['buffer_points']), analysis_extent, 'osm_buffer_points', source_info.get('label', 'OSM'))
+        _create_point_sample(spatial_join_points_fc, place_geoms or poi_geoms, int(self.vector_config['spatial_join_points']), analysis_extent, 'osm_spatial_join_points', source_info.get('label', 'OSM'))
+        if landuse_geoms:
+            _create_polygon_sample(spatial_join_polygons_fc, landuse_geoms, int(self.vector_config['spatial_join_polygons']), analysis_extent, 'osm_join_zones', source_info.get('label', 'OSM'))
+        else:
+            rows, cols = factor_grid_dimensions(int(self.vector_config['spatial_join_polygons']))
+            _create_fishnet(spatial_join_polygons_fc, analysis_extent, rows, cols, 'osm_join_zones', source_info.get('label', 'OSM'))
+        _create_polygon_sample(calculate_field_fc, building_geoms or landuse_geoms, int(self.vector_config['calculate_field_records']), analysis_extent, 'osm_calculate_field', source_info.get('label', 'OSM'))
+
+        rows_a, cols_a = factor_grid_dimensions(int(self.vector_config['intersect_features_a']))
+        rows_b, cols_b = factor_grid_dimensions(int(self.vector_config['intersect_features_b']))
+        _create_fishnet(test_polygons_a_fc, analysis_extent, rows_a, cols_a, 'osm_intersect_a', source_info.get('label', 'OSM'), offset=False)
+        _create_fishnet(test_polygons_b_fc, analysis_extent, rows_b, cols_b, 'osm_intersect_b', source_info.get('label', 'OSM'), offset=True)
+
+        constant_raster_path, analysis_raster_path, block_size = _create_rasters(
+            self.root_dir,
+            analysis_extent,
+            'osm',
+            source_info.get('label', 'OSM'),
+            self.raster_config
+        )
+
+        dataset_counts = {
+            'analysis_boundary': _feature_count(boundary_fc),
+            'buffer_points': _feature_count(buffer_points_fc),
+            'spatial_join_points': _feature_count(spatial_join_points_fc),
+            'spatial_join_polygons': _feature_count(spatial_join_polygons_fc),
+            'calculate_field_fc': _feature_count(calculate_field_fc),
+            'test_polygons_a': _feature_count(test_polygons_a_fc),
+            'test_polygons_b': _feature_count(test_polygons_b_fc),
+            'osm_roads': _feature_count(roads_fc),
+            'osm_buildings': _feature_count(buildings_fc),
+            'osm_landuse': _feature_count(landuse_fc),
+            'osm_pois': _feature_count(pois_fc),
+            'osm_places': _feature_count(places_fc),
+        }
+
+        manifest = self._build_manifest('osm', source_info, analysis_extent, block_size, dataset_counts)
+        manifest['constant_raster_path'] = constant_raster_path
+        manifest['analysis_raster_path'] = analysis_raster_path
+        return manifest
+
+    def _build_synthetic(self):
+        print("  [Fallback] Building synthetic benchmark inputs")
+        projected_sr = _projected_spatial_reference()
+        side = 1000000.0
+        analysis_extent = (-side / 2.0, -side / 2.0, side / 2.0, side / 2.0)
+        boundary_fc = os.path.join(self.gdb_path, 'analysis_boundary')
+        _create_boundary(boundary_fc, analysis_extent, 'synthetic', 'Synthetic')
+
+        buffer_points_fc = os.path.join(self.gdb_path, 'buffer_points')
+        spatial_join_points_fc = os.path.join(self.gdb_path, 'spatial_join_points')
+        spatial_join_polygons_fc = os.path.join(self.gdb_path, 'spatial_join_polygons')
+        calculate_field_fc = os.path.join(self.gdb_path, 'calculate_field_fc')
+        test_polygons_a_fc = os.path.join(self.gdb_path, 'test_polygons_a')
+        test_polygons_b_fc = os.path.join(self.gdb_path, 'test_polygons_b')
+
+        _create_random_points(buffer_points_fc, int(self.vector_config['buffer_points']), analysis_extent, 'synthetic_buffer_points', 'Synthetic')
+        _create_random_points(spatial_join_points_fc, int(self.vector_config['spatial_join_points']), analysis_extent, 'synthetic_spatial_join_points', 'Synthetic')
+
+        rows_z, cols_z = factor_grid_dimensions(int(self.vector_config['spatial_join_polygons']))
+        _create_fishnet(spatial_join_polygons_fc, analysis_extent, rows_z, cols_z, 'synthetic_join_zones', 'Synthetic')
+
+        _create_fishnet(calculate_field_fc, analysis_extent, rows_z, cols_z, 'synthetic_calculate_field', 'Synthetic')
+        rows_a, cols_a = factor_grid_dimensions(int(self.vector_config['intersect_features_a']))
+        rows_b, cols_b = factor_grid_dimensions(int(self.vector_config['intersect_features_b']))
+        _create_fishnet(test_polygons_a_fc, analysis_extent, rows_a, cols_a, 'synthetic_intersect_a', 'Synthetic', offset=False)
+        _create_fishnet(test_polygons_b_fc, analysis_extent, rows_b, cols_b, 'synthetic_intersect_b', 'Synthetic', offset=True)
+
+        constant_raster_path, analysis_raster_path, block_size = _create_rasters(
+            self.root_dir,
+            analysis_extent,
+            'synthetic',
+            'Synthetic',
+            self.raster_config
+        )
+
+        dataset_counts = {
+            'analysis_boundary': _feature_count(boundary_fc),
+            'buffer_points': _feature_count(buffer_points_fc),
+            'spatial_join_points': _feature_count(spatial_join_points_fc),
+            'spatial_join_polygons': _feature_count(spatial_join_polygons_fc),
+            'calculate_field_fc': _feature_count(calculate_field_fc),
+            'test_polygons_a': _feature_count(test_polygons_a_fc),
+            'test_polygons_b': _feature_count(test_polygons_b_fc),
+            'osm_roads': 0,
+            'osm_buildings': 0,
+            'osm_landuse': 0,
+            'osm_pois': 0,
+            'osm_places': 0,
+        }
+
+        manifest = self._build_manifest('synthetic', {}, analysis_extent, block_size, dataset_counts)
+        manifest['constant_raster_path'] = constant_raster_path
+        manifest['analysis_raster_path'] = analysis_raster_path
+        manifest['analysis_crs'] = 3857
+        return manifest
+
+    def generate_all(self, force=False):
+        """Generate all inputs and return the manifest payload."""
+        if not HAS_ARCPY:
+            raise RuntimeError("ArcPy is required to generate benchmark input data")
+
+        _ensure_dir(self.root_dir)
+        clear_workspace_cache(self.root_dir)
+
+        if not force:
+            existing_manifest = load_manifest(self.root_dir, default={})
+            if self._validate_existing_assets(existing_manifest):
+                print("  Reusing existing benchmark inputs from {}".format(self.gdb_path))
+                return existing_manifest
+
+        print("  Preparing benchmark inputs for scale: {}".format(self.scale))
+        _delete_path(self.gdb_path)
+
+        try:
+            arcpy.CreateFileGDB_management(self.root_dir, self.gdb_name)
+        except Exception as exc:
+            raise RuntimeError("Failed to create benchmark geodatabase: {}".format(exc))
+
+        manifest = None
+        source_info = None
+        try:
+            try:
+                source_info = ensure_osm_sample_cache(getattr(settings, 'OSM_CACHE_DIR', None), preferred_source='hong-kong')
+                manifest = self._build_from_source_layers(source_info)
+            except Exception as osm_exc:
+                print("  [OSM] {}. Falling back to synthetic data.".format(osm_exc))
+                manifest = self._build_synthetic()
+
+            save_manifest(self.root_dir, manifest)
+            print("  Wrote manifest: {}".format(self.manifest_path))
+            print("  Source mode: {}".format(manifest.get('source_mode')))
+            print("  Boundary extent: {}".format(manifest.get('analysis_boundary_extent')))
+            print("  Constant raster: {}".format(manifest.get('constant_raster_path')))
+            print("  Analysis raster: {}".format(manifest.get('analysis_raster_path')))
+            return manifest
+        except Exception:
+            clear_workspace_cache(self.root_dir)
+            raise
+        finally:
+            clear_workspace_cache(self.root_dir)
+
+
+def generate_all(force=False):
+    """Convenience wrapper used by external scripts."""
+    return TestDataGenerator().generate_all(force=force)
 
 
 if __name__ == '__main__':
-    main()
+    print("Generating benchmark input data...")
+    payload = generate_all(force='--force' in sys.argv)
+    print("Done. Mode: {}".format(payload.get('source_mode')))

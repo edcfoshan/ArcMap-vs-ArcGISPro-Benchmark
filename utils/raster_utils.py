@@ -18,6 +18,9 @@ except ImportError:
     HAS_ARCPY = False
     arcpy = None
 
+from utils.gis_cleanup import remove_dataset_artifacts
+from utils.benchmark_shapes import build_block_pattern_array
+
 
 def _parse_extent(extent):
     """Parse an extent value into four floats."""
@@ -64,11 +67,7 @@ def create_constant_raster(output_path, cell_size, extent, value=1, spatial_refe
         raise RuntimeError("ArcPy is required to create benchmark rasters")
 
     _ensure_parent_dir(output_path)
-    if arcpy.Exists(output_path):
-        try:
-            arcpy.Delete_management(output_path)
-        except Exception:
-            pass
+    remove_dataset_artifacts(output_path)
 
     x_min, y_min, x_max, y_max = _parse_extent(extent)
     extent_text = "{} {} {} {}".format(x_min, y_min, x_max, y_max)
@@ -124,11 +123,7 @@ def double_raster(input_raster, output_raster, use_spatial_analyst=False):
         raise RuntimeError("ArcPy is required to process benchmark rasters")
 
     _ensure_parent_dir(output_raster)
-    if arcpy.Exists(output_raster):
-        try:
-            arcpy.Delete_management(output_raster)
-        except Exception:
-            pass
+    remove_dataset_artifacts(output_raster)
 
     if use_spatial_analyst and spatial_analyst_available():
         try:
@@ -166,3 +161,45 @@ def double_raster(input_raster, output_raster, use_spatial_analyst=False):
     if hasattr(desc, 'spatialReference') and desc.spatialReference:
         arcpy.DefineProjection_management(output_raster, desc.spatialReference)
     return output_raster
+
+
+def create_block_pattern_raster(output_path, cell_size, extent, block_size, levels=6, spatial_reference=None):
+    """Create a deterministic integer raster with repeating block regions."""
+    if not HAS_ARCPY:
+        raise RuntimeError("ArcPy is required to create benchmark rasters")
+
+    _ensure_parent_dir(output_path)
+    remove_dataset_artifacts(output_path)
+
+    x_min, y_min, x_max, y_max = _parse_extent(extent)
+    width = max(1, int(round((x_max - x_min) / float(cell_size))))
+    height = max(1, int(round((y_max - y_min) / float(cell_size))))
+    if width != height:
+        raise RuntimeError("Patterned benchmark rasters must be square: {}x{}".format(height, width))
+
+    array = build_block_pattern_array(height, width, block_size=block_size, levels=levels)
+    lower_left = arcpy.Point(x_min, y_min)
+    raster = arcpy.NumPyArrayToRaster(
+        array,
+        lower_left,
+        float(cell_size),
+        float(cell_size)
+    )
+    raster.save(output_path)
+    if spatial_reference is not None:
+        arcpy.DefineProjection_management(output_path, spatial_reference)
+    return output_path
+
+
+def expected_clip_dimension(input_size, clip_ratio):
+    """Return the expected raster dimension after centered clipping.
+
+    The benchmark clip geometry is centered on raster bounds, and ArcGIS /
+    Rasterio can both return one extra cell when the clipped span lands on a
+    half-cell boundary. We normalize that behavior here so both benchmark
+    stacks validate against the same rule.
+    """
+    expected_size = int(round(float(input_size) * float(clip_ratio)))
+    if expected_size % 2 == 1:
+        expected_size += 1
+    return expected_size

@@ -2,6 +2,13 @@
 
 > 文件名沿用历史命名，内容以当前发布版 GUI 为准。
 
+## 当前进度
+
+- `standard` 已切换为“按测试项单独调参”的收敛版方案，`tiny / small` 继续用于快速验证。
+- 每次运行都会生成 `benchmark_run.log` 与 `benchmark_manifest.json`，方便回看失败步骤与输入来源。
+- 独立中文验证网页在 `verification_console/static/`，默认只勾选 `tiny + small`。
+- 最新交接说明见 `HANDOFF.md`。
+
 ## GUI 能做什么
 
 - 统一运行 Python 2.7、Python 3.x 与开源库对比测试。
@@ -119,6 +126,8 @@ C:\temp\arcgis_benchmark_data\<时间戳>\
 ├── comparison_table.tex
 ├── comparison_data.csv
 ├── comparison_data.json
+├── benchmark_run.log
+├── benchmark_manifest.json
 └── data\
     ├── py2\
     ├── py3\

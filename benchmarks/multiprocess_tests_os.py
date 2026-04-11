@@ -154,13 +154,13 @@ class MultiprocessBenchmarkOS(BaseBenchmark):
         
         print("  类别: %s" % self.category)
         
-        # Setup
-        print("  执行 setup()...")
-        with ProgressHeartbeat("{} setup()".format(self.name)):
-            self.setup()
-        print("  [OK] setup() 完成")
-        
         try:
+            # Setup
+            print("  执行 setup()...")
+            with ProgressHeartbeat("{} setup()".format(self.name)):
+                self.setup()
+            print("  [OK] setup() 完成")
+
             # Warmup runs
             if warmup_runs > 0:
                 print("  预热运行 (%d 次)..." % warmup_runs)
@@ -244,8 +244,9 @@ class MP_V1_CreateFishnet_OS(MultiprocessBenchmarkOS):
     
     def __init__(self):
         super(MP_V1_CreateFishnet_OS, self).__init__("MP_V1_CreateFishnet_OS", "vector_multiprocess")
-        self.rows = settings.VECTOR_CONFIG['fishnet_rows']
-        self.cols = settings.VECTOR_CONFIG['fishnet_cols']
+        cfg = settings.get_vector_config_for_test('V1')
+        self.rows = cfg['fishnet_rows']
+        self.cols = cfg['fishnet_cols']
         self.output_path = None
     
     def setup(self):
@@ -317,7 +318,8 @@ class MP_V2_CreateRandomPoints_OS(MultiprocessBenchmarkOS):
     
     def __init__(self):
         super(MP_V2_CreateRandomPoints_OS, self).__init__("MP_V2_CreateRandomPoints_OS", "vector_multiprocess")
-        self.num_points = settings.VECTOR_CONFIG['random_points']
+        cfg = settings.get_vector_config_for_test('V2')
+        self.num_points = cfg['random_points']
         self.output_path = None
     
     def setup(self):
@@ -504,7 +506,8 @@ class MP_R1_CreateConstantRaster_OS(MultiprocessBenchmarkOS):
 
     def __init__(self):
         super(MP_R1_CreateConstantRaster_OS, self).__init__("MP_R1_CreateConstantRaster_OS", "raster_multiprocess")
-        self.size = settings.RASTER_CONFIG['constant_raster_size']
+        cfg = settings.get_raster_config_for_test('R1')
+        self.size = cfg['constant_raster_size']
         self.output_path = None
 
     def setup(self):

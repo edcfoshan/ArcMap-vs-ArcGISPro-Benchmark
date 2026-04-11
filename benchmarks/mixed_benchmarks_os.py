@@ -24,11 +24,50 @@ except ImportError:
 
 from config import settings
 from benchmarks.base_benchmark import BaseBenchmark
+from utils.benchmark_inputs import (
+    get_analysis_boundary_extent,
+    get_analysis_crs,
+    get_analysis_raster_path,
+    get_benchmark_gdb_path,
+)
+
+
+def _analysis_extent(default_size):
+    """Return a square projected extent for raster fallback generation."""
+    extent = get_analysis_boundary_extent(settings.DATA_DIR)
+    if extent:
+        return extent
+    half = float(default_size) / 2.0
+    return (-half, -half, half, half)
+
+
+def _create_analysis_raster_fallback(output_path, raster_size):
+    """Create a patterned raster when the generated analysis raster is missing."""
+    extent = _analysis_extent(raster_size)
+    width = int(raster_size)
+    height = int(raster_size)
+    transform = from_bounds(extent[0], extent[1], extent[2], extent[3], width, height)
+    rows = np.arange(height, dtype=np.int32).reshape(-1, 1)
+    cols = np.arange(width, dtype=np.int32).reshape(1, -1)
+    data = ((rows // max(1, height // 8)) + (cols // max(1, width // 8))) % 8 + 1
+    profile = {
+        'driver': 'GTiff',
+        'height': height,
+        'width': width,
+        'count': 1,
+        'dtype': data.dtype,
+        'crs': 'EPSG:{}'.format(get_analysis_crs(settings.DATA_DIR)),
+        'transform': transform,
+        'compress': 'lzw'
+    }
+    with rasterio.open(output_path, 'w', **profile) as dst:
+        dst.write(data, 1)
+    return output_path
 
 
 class MixedBenchmarksOS(object):
     """Collection of mixed vector-raster benchmarks using open-source libraries"""
-    
+
     @staticmethod
     def get_all_benchmarks():
         """Get all open-source mixed benchmark instances"""
@@ -42,36 +81,41 @@ class MixedBenchmarksOS(object):
 
 class M1_PolygonToRaster_OS(BaseBenchmark):
     """Benchmark: Polygon to Raster Conversion using Rasterio"""
-    
+
     def __init__(self):
         super(M1_PolygonToRaster_OS, self).__init__("M1_PolygonToRaster_OS", "mixed_os")
         self.gdb_path = None
         self.input_layer = None
         self.output_path = None
         self.cell_size = None
-    
+
     def setup(self):
-        self.gdb_path = os.path.join(settings.DATA_DIR, settings.DEFAULT_GDB_NAME)
+        self.gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
         self.input_layer = "test_polygons_a"
         self.output_path = os.path.join(settings.DATA_DIR, "M1_poly_to_ras_os.tif")
-        
-        # Calculate cell size
-        raster_size = settings.RASTER_CONFIG['constant_raster_size']
-        self.cell_size = 360.0 / raster_size
-    
+
+        cfg = settings.get_raster_config_for_test('M1')
+        raster_size = cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size'))
+        extent = get_analysis_boundary_extent(settings.DATA_DIR)
+        if extent:
+            self.cell_size = max(1.0, float(extent[2] - extent[0]) / float(raster_size))
+        else:
+            self.cell_size = 1.0
+
     def teardown(self):
         if self.output_path and os.path.exists(self.output_path):
             try:
                 os.remove(self.output_path)
             except:
                 pass
-    
+
     def run_single(self):
         # Read polygons (using layer parameter)
         gdf = gpd.read_file(self.gdb_path, layer=self.input_layer)
-        
+
         # Rasterize
-        raster_size = settings.RASTER_CONFIG['constant_raster_size']
+        cfg = settings.get_raster_config_for_test('M1')
+        raster_size = cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size'))
         bounds = gdf.total_bounds
         width = float(bounds[2] - bounds[0])
         height = float(bounds[3] - bounds[1])
@@ -79,10 +123,10 @@ class M1_PolygonToRaster_OS(BaseBenchmark):
         expected_width = int(round(width / scale))
         expected_height = int(round(height / scale))
         transform = from_bounds(bounds[0], bounds[1], bounds[2], bounds[3], expected_width, expected_height)
-        
+
         # Create shapes for rasterization (geometry, value pairs)
         shapes = ((geom, value) for geom, value in zip(gdf.geometry, gdf['poly_id']))
-        
+
         # Rasterize
         result = features.rasterize(
             shapes=shapes,
@@ -91,7 +135,7 @@ class M1_PolygonToRaster_OS(BaseBenchmark):
             fill=0,
             dtype=np.int32
         )
-        
+
         # Write to GeoTIFF
         profile = {
             'driver': 'GTiff',
@@ -99,17 +143,17 @@ class M1_PolygonToRaster_OS(BaseBenchmark):
             'width': expected_width,
             'count': 1,
             'dtype': result.dtype,
-            'crs': 'EPSG:4326',
+            'crs': 'EPSG:{}'.format(get_analysis_crs(settings.DATA_DIR)),
             'transform': transform,
             'compress': 'lzw'
         }
-        
+
         with rasterio.open(self.output_path, 'w', **profile) as dst:
             dst.write(result, 1)
 
         filled_cells = int(np.count_nonzero(result))
         if filled_cells <= 0:
-            raise RuntimeError("M1_PolygonToRaster_OS 鏍￠獙澶辫触: 杈撳嚭鏍呮牸涓虹┖")
+            raise RuntimeError("M1_PolygonToRaster_OS 校验失败: 输出栅格没有有效像元")
 
         return {
             'output_width': expected_width,
@@ -123,18 +167,18 @@ class M1_PolygonToRaster_OS(BaseBenchmark):
 
 class M2_RasterToPoint_OS(BaseBenchmark):
     """Benchmark: Raster to Points using Rasterio and GeoPandas"""
-    
+
     def __init__(self):
         super(M2_RasterToPoint_OS, self).__init__("M2_RasterToPoint_OS", "mixed_os")
         self.input_path = None
         self.output_path = None
-    
+
     def setup(self):
-        # First create a raster if not exists
-        self.input_path = os.path.join(settings.DATA_DIR, "constant_raster.tif")
+        self.input_path = get_analysis_raster_path(settings.DATA_DIR)
         self.output_path = os.path.join(settings.DATA_DIR, "M2_raster_to_point_os.gpkg")
-        
-        expected_size = int(settings.RASTER_CONFIG['constant_raster_size'])
+
+        cfg = settings.get_raster_config_for_test('M2')
+        expected_size = int(cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size')))
         needs_regen = True
         if os.path.exists(self.input_path):
             try:
@@ -150,21 +194,16 @@ class M2_RasterToPoint_OS(BaseBenchmark):
             except Exception:
                 pass
 
-        # Create input if not exists / mismatch (don't teardown - keep for other tests)
         if needs_regen:
-            from benchmarks.raster_benchmarks_os import R1_CreateConstantRaster_OS
-            r1 = R1_CreateConstantRaster_OS()
-            r1.setup()
-            r1.run_single()  # Keep the file, don't call teardown()
-            self.input_path = r1.output_path
-    
+            _create_analysis_raster_fallback(self.input_path, expected_size)
+
     def teardown(self):
         if self.output_path and os.path.exists(self.output_path):
             try:
                 os.remove(self.output_path)
             except:
                 pass
-    
+
     def run_single(self):
         # Delete previous output if present
         if self.output_path and os.path.exists(self.output_path):
@@ -183,7 +222,8 @@ class M2_RasterToPoint_OS(BaseBenchmark):
             source_width = int(src.width)
             source_height = int(src.height)
 
-            expected_size = int(settings.RASTER_CONFIG['constant_raster_size'])
+            cfg = settings.get_raster_config_for_test('M2')
+            expected_size = int(cfg.get('analysis_raster_size', settings.RASTER_CONFIG.get('analysis_raster_size')))
             if source_width != expected_size or source_height != expected_size:
                 raise RuntimeError(
                     "M2_RasterToPoint_OS 输入栅格尺寸不符合当前规模: 实际 {}x{}, 期望 {}x{}".format(
@@ -193,7 +233,7 @@ class M2_RasterToPoint_OS(BaseBenchmark):
 
             transform = src.transform
             nodata = src.nodata
-            crs = src.crs or "EPSG:4326"
+            crs = src.crs or "EPSG:{}".format(get_analysis_crs(settings.DATA_DIR))
 
             # RasterToPoint creates a point for every cell with a value (NoData is skipped).
             expected_features = int(source_width) * int(source_height) if nodata is None else None
@@ -273,7 +313,7 @@ class M2_RasterToPoint_OS(BaseBenchmark):
                     total_written
                 )
             )
-        
+
         return {
             'features_created': total_written,
             'expected_features': expected_features if expected_features is not None else total_written,
@@ -291,7 +331,7 @@ if __name__ == '__main__':
         print("Open-source libraries not available. Please install:")
         print("  pip install geopandas rasterio shapely")
         sys.exit(1)
-    
+
     print("Testing open-source mixed benchmarks...")
     benchmarks = MixedBenchmarksOS.get_all_benchmarks()
     for bm in benchmarks:

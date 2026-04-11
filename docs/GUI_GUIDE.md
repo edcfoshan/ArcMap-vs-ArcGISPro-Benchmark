@@ -2,6 +2,13 @@
 
 > 面向 `v1.0.0` 当前界面；不再使用旧版“五步向导”说明。
 
+## 当前进度
+
+- `standard` 已改为按测试项单独调参，目标是把 12 项尽量推到更适合论文展示的耗时区间。
+- `tiny / small` 继续作为快速验证层级，独立中文验证网页默认也只勾选这两档。
+- 每次运行都会写出 `benchmark_run.log` 和 `benchmark_manifest.json`，用于回溯与复现。
+- 交接与后续任务收口请看 `HANDOFF.md`。
+
 ## 推荐启动方式
 
 ### 推荐
@@ -83,7 +90,7 @@ python launch_gui.py
 ### 5. 查看结果
 
 - 点击“打开生成结果文件夹”。
-- 每个规模目录下都应有四份报告和 `data\py2|py3|os` 原始结果目录。
+- 每个规模目录下都应有报告文件、`benchmark_run.log`、`benchmark_manifest.json` 和 `data\py2|py3|os` 原始结果目录。
 
 ## 输出目录说明
 
@@ -96,6 +103,8 @@ C:\temp\arcgis_benchmark_data\<时间戳>\
 │   ├── comparison_table.tex
 │   ├── comparison_data.csv
 │   ├── comparison_data.json
+│   ├── benchmark_run.log
+│   ├── benchmark_manifest.json
 │   └── data\
 │       ├── py2\
 │       ├── py3\
@@ -110,6 +119,8 @@ C:\temp\arcgis_benchmark_data\<时间戳>\
 - `comparison_table.tex` 可直接用于论文排版。
 - `comparison_data.csv` 便于 Excel 继续分析。
 - `comparison_data.json` 保留原始结构化结果。
+- `benchmark_run.log` 记录完整控制台输出，便于回看失败步骤。
+- `benchmark_manifest.json` 保存输入来源、OSM 缓存与数据规模信息。
 
 ## 高级设置里有什么
 
