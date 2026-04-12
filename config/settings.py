@@ -107,26 +107,26 @@ RASTER_CONFIG_STANDARD = {
 STANDARD_VECTOR_CONFIG_BY_TEST = {
     # 控制组：尽量保持偏轻
     'V1': {
-        'fishnet_rows': 250,
-        'fishnet_cols': 250,
+        'fishnet_rows': 1500,
+        'fishnet_cols': 1500,
     },
     'V2': {
-        'random_points': 25000,
+        'random_points': 1000000,
     },
-    # 重点提压项（先给一个保守起步值，后续用实测迭代）
+    # 重点提压项（第二轮迭代，基于实测 2026-04-12 tiny/standard 数据调参）
     'V3': {
-        'buffer_points': 80000,
+        'buffer_points': 200000,
     },
     'V4': {
-        'intersect_features_a': 350000,
-        'intersect_features_b': 350000,
+        'intersect_features_a': 200000,
+        'intersect_features_b': 200000,
     },
     'V5': {
-        'spatial_join_points': 250000,
-        'spatial_join_polygons': 5000,
+        'spatial_join_points': 85000,
+        'spatial_join_polygons': 1700,
     },
     'V6': {
-        'calculate_field_records': 400000,
+        'calculate_field_records': 750000,
     },
     # 混合项默认复用矢量/栅格输入规模
     'M1': {},
@@ -136,24 +136,28 @@ STANDARD_VECTOR_CONFIG_BY_TEST = {
 STANDARD_RASTER_CONFIG_BY_TEST = {
     # 控制组：偏轻
     'R1': {
-        'constant_raster_size': 2500,
+        'constant_raster_size': 32700,
     },
     # 重点提压项：优先通过像元规模与重采样比提时
     'R2': {
-        'resample_source_size': 4500,
-        'resample_target_size': 2250,
+        'resample_source_size': 30000,
+        'resample_target_size': 28000,
     },
     'R3': {
-        'analysis_raster_size': 4500,
-        'analysis_raster_clip_ratio': 0.55,
+        'analysis_raster_size': 32000,
+        'analysis_raster_clip_ratio': 0.98,
     },
     'R4': {
-        'analysis_raster_size': 5000,
-        'analysis_raster_target_size': 2500,
-        'analysis_raster_clip_ratio': 0.55,
+        'analysis_raster_size': 32600,
+        'analysis_raster_target_size': 15000,
+        'analysis_raster_clip_ratio': 0.95,
     },
-    'M1': {},
-    'M2': {},
+    'M1': {
+        'analysis_raster_size': 18000,
+    },
+    'M2': {
+        'analysis_raster_size': 1500,
+    },
 }
 
 # Medium Scale (heavier than standard but still intended to be runnable)
@@ -201,6 +205,10 @@ RASTER_CONFIG_LARGE = {
     'analysis_raster_target_size': 2500,
     'analysis_raster_clip_ratio': 0.5,
 }
+
+# Active format and complexity for multi-matrix runs
+ACTIVE_OUTPUT_FORMAT = 'GDB'
+ACTIVE_COMPLEXITY = 'simple'
 
 # Select configuration to use
 # Options: 'tiny', 'small', 'standard', 'medium', 'large'

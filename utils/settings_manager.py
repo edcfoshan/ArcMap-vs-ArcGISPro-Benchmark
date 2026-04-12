@@ -170,6 +170,9 @@ TRANSLATIONS = {
         'label_warmup': '预热运行次数:',
         'label_scale': '数据规模:',
         'label_workers': '多进程Worker数:',
+        'tooltip_runs': '正式计时的重复测试次数',
+        'tooltip_warmup': '正式计时前的预热次数，消除文件缓存偏差',
+        'tooltip_workers': '多进程分块时的并行 worker 数',
 
         'label_data_dir': '涓存椂鏁版嵁鐩綍:',
         'label_os_status': '寮€婧愬簱鐘舵€?:',
@@ -268,6 +271,14 @@ TRANSLATIONS = {
         'label_edit_scale': '当前编辑规模:',
         'btn_apply_scale': '应用当前参数',
         'btn_reset_scale': '恢复默认值',
+
+        # First-run dialog
+        'first_run_title': '欢迎使用 ArcGIS 基准测试工具',
+        'first_run_message': '首次启动，请确认 Python 路径配置。如路径为空，可点击“自动检测”。',
+        'first_run_py27': 'Python 2.7 路径：',
+        'first_run_py3': 'Python 3.x 路径：',
+        'btn_auto_detect': '自动检测',
+        'btn_confirm': '确认',
     },
     'en': {
         # Window titles
@@ -301,6 +312,9 @@ TRANSLATIONS = {
         'label_warmup': 'Warmup Runs:',
         'label_scale': 'Data Scale:',
         'label_workers': 'MP Workers:',
+        'tooltip_runs': 'Number of timed test repetitions',
+        'tooltip_warmup': 'Warm-up runs before timing to eliminate file-cache bias',
+        'tooltip_workers': 'Number of parallel workers for chunked multiprocess tests',
 
         'label_data_dir': 'Temp Data Dir:',
         'label_os_status': 'Open-source status:',
@@ -393,6 +407,14 @@ TRANSLATIONS = {
         'label_edit_scale': 'Edit Scale:',
         'btn_apply_scale': 'Apply Current',
         'btn_reset_scale': 'Reset Defaults',
+
+        # First-run dialog
+        'first_run_title': 'Welcome to ArcGIS Benchmark Tool',
+        'first_run_message': 'First launch. Please confirm Python paths. Click "Auto-detect" if empty.',
+        'first_run_py27': 'Python 2.7 path:',
+        'first_run_py3': 'Python 3.x path:',
+        'btn_auto_detect': 'Auto-detect',
+        'btn_confirm': 'Confirm',
     }
 }
 
@@ -413,6 +435,7 @@ class SettingsManager(object):
             return
         self._initialized = True
         self.config = self._load_config()
+        self.is_first_run = not os.path.exists(CONFIG_FILE)
 
     def _load_config(self):
         """从文件加载配置"""

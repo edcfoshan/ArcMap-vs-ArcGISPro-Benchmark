@@ -25,6 +25,7 @@ from utils.benchmark_inputs import (
     get_analysis_crs,
     get_analysis_raster_path,
     get_benchmark_gdb_path,
+    get_input_feature_path,
 )
 from utils.benchmark_shapes import derive_block_size
 from utils.gis_cleanup import clear_workspace_cache, remove_dataset_artifacts
@@ -66,9 +67,8 @@ def _ensure_analysis_raster(output_path, raster_size):
 
 def _get_raster_min_max(raster_path):
     """Return raster min/max values as floats."""
-    min_value = float(arcpy.GetRasterProperties_management(raster_path, "MINIMUM")[0])
-    max_value = float(arcpy.GetRasterProperties_management(raster_path, "MAXIMUM")[0])
-    return min_value, max_value
+    r = arcpy.Raster(raster_path)
+    return float(r.minimum), float(r.maximum)
 
 
 class MixedBenchmarks(object):
@@ -87,12 +87,13 @@ class MixedBenchmarks(object):
 
 class M1_PolygonToRaster(BaseBenchmark):
     """Benchmark: Polygon to Raster Conversion"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='SHP'):
         super(M1_PolygonToRaster, self).__init__("M1_PolygonToRaster", "mixed")
         self.input_fc = None
         self.output_raster = None
         self.cell_size = None
+        self.output_format = output_format
     
     def setup(self):
         clear_workspace_cache(settings.DATA_DIR)
@@ -100,7 +101,7 @@ class M1_PolygonToRaster(BaseBenchmark):
         arcpy.env.overwriteOutput = True
         
         gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.input_fc = os.path.join(gdb_path, "test_polygons_a")
+        self.input_fc = get_input_feature_path("test_polygons_a", settings.DATA_DIR)
         # Use version-specific output to avoid lock conflicts between Py2/Py3
         py_version = "py2" if sys.version_info[0] < 3 else "py3"
         self.output_raster = os.path.join(settings.DATA_DIR, "M1_poly_to_ras_{}.tif".format(py_version))

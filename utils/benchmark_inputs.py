@@ -21,10 +21,56 @@ def get_manifest(root_dir=None, default=None):
     return load_manifest(get_benchmark_root(root_dir), default=default)
 
 
+def get_active_format(root_dir=None):
+    """Return the active input format from manifest or settings."""
+    manifest = get_manifest(root_dir, default={})
+    fmt = manifest.get('output_format')
+    if fmt:
+        return str(fmt).upper()
+    return getattr(settings, 'ACTIVE_OUTPUT_FORMAT', 'GDB')
+
+
+def get_active_complexity(root_dir=None):
+    """Return the active complexity tier from manifest or settings."""
+    manifest = get_manifest(root_dir, default={})
+    complexity = manifest.get('complexity')
+    if complexity:
+        return str(complexity).lower()
+    return getattr(settings, 'ACTIVE_COMPLEXITY', 'simple')
+
+
 def get_benchmark_gdb_path(root_dir=None):
     """Return the benchmark file geodatabase path for the active root."""
     root_dir = get_benchmark_root(root_dir)
     return os.path.join(root_dir, getattr(settings, 'DEFAULT_GDB_NAME', 'benchmark_data.gdb'))
+
+
+def get_benchmark_gpkg_path(root_dir=None):
+    """Return the benchmark GeoPackage path for the active root."""
+    root_dir = get_benchmark_root(root_dir)
+    return os.path.join(root_dir, 'benchmark_data.gpkg')
+
+
+def get_input_feature_path(dataset_name, root_dir=None):
+    """Return the ArcPy-compatible path to an input feature class for the active format."""
+    root_dir = get_benchmark_root(root_dir)
+    fmt = get_active_format(root_dir)
+    if fmt == 'SHP':
+        return os.path.join(root_dir, '{}.shp'.format(dataset_name))
+    if fmt == 'GPKG':
+        return os.path.join(get_benchmark_gpkg_path(root_dir), dataset_name)
+    return os.path.join(get_benchmark_gdb_path(root_dir), dataset_name)
+
+
+def get_input_feature_path_os(dataset_name, root_dir=None):
+    """Return the (path, layer) tuple for GeoPandas for the active format."""
+    root_dir = get_benchmark_root(root_dir)
+    fmt = get_active_format(root_dir)
+    if fmt == 'SHP':
+        return os.path.join(root_dir, '{}.shp'.format(dataset_name)), None
+    if fmt == 'GPKG':
+        return get_benchmark_gpkg_path(root_dir), dataset_name
+    return get_benchmark_gdb_path(root_dir), dataset_name
 
 
 def get_analysis_boundary_path(root_dir=None):

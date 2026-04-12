@@ -4,6 +4,9 @@
   var state = null;
   var bootstrapped = false;
   var pollTimer = null;
+  var allLogs = [];
+  var logFilter = "";
+  var activeLogTag = null;
 
   var els = {
     jobStatus: document.getElementById("job-status"),
@@ -15,6 +18,10 @@
     progressBar: document.getElementById("progress-bar"),
     substatus: document.getElementById("substatus"),
     logOutput: document.getElementById("log-output"),
+    logSearch: document.getElementById("log-search"),
+    logFilters: document.getElementById("log-filters"),
+    logCopy: document.getElementById("log-copy"),
+    logClear: document.getElementById("log-clear"),
     scaleTableBody: document.getElementById("scale-table-body"),
     python27Path: document.getElementById("python27-path"),
     python3Path: document.getElementById("python3-path"),
@@ -28,9 +35,12 @@
     startButton: document.getElementById("start"),
     stopButton: document.getElementById("stop"),
     refreshButton: document.getElementById("refresh"),
-    presetFirstThree: document.getElementById("preset-first-three"),
+    presetDefaultTwo: document.getElementById("preset-default-two"),
     presetFast: document.getElementById("preset-fast"),
     scaleList: document.getElementById("scale-list"),
+    resultsPanel: document.getElementById("results-panel"),
+    resultsToolbar: document.getElementById("results-toolbar"),
+    resultsPreview: document.getElementById("results-preview"),
   };
 
   var stageOrder = ["py2", "py3", "os", "analysis", "validation"];
@@ -40,6 +50,13 @@
     os: "开源库",
     analysis: "分析",
     validation: "校验",
+  };
+  var stageWeights = {
+    py2: 0.2,
+    py3: 0.2,
+    os: 0.2,
+    analysis: 0.2,
+    validation: 0.2,
   };
 
   function apiGet(path) {
@@ -140,6 +157,14 @@
     return pieces.join(" | ");
   }
 
+  function errorTooltip(stage) {
+    if (!stage || !stage.output_tail || !stage.output_tail.length) {
+      return "";
+    }
+    var tail = stage.output_tail.slice(-3);
+    return tail.join("\n");
+  }
+
   function scaleRow(scaleState) {
     var tr = document.createElement("tr");
 
@@ -157,6 +182,13 @@
       var badge = document.createElement("div");
       badge.className = statusClass(stage ? stage.status : "pending");
       badge.textContent = badgeLabel(stage ? stage.status : "pending");
+
+      var tooltip = errorTooltip(stage);
+      if (tooltip) {
+        badge.setAttribute("title", tooltip);
+        badge.style.cursor = "help";
+      }
+
       td.appendChild(badge);
 
       var sub = document.createElement("div");
@@ -200,14 +232,166 @@
     els.multiprocess.checked = true;
   }
 
-  function setFirstThreePreset() {
+  function setDefaultTwoScalesPreset() {
     setSelectedScales(["tiny", "small"]);
   }
 
+  function computeGranularProgress(snapshot) {
+    var scales = snapshot.scales || [];
+    var selected = snapshot.selected_scales || [];
+    var total = selected.length || scales.length || 1;
+    if (total === 0) {
+      return 0;
+    }
+
+    var totalProgress = 0;
+    scales.forEach(function (scale) {
+      var scaleProgress = 0;
+      stageOrder.forEach(function (stageName) {
+        var stage = scale.stages ? scale.stages[stageName] : null;
+        var status = stage ? stage.status : "pending";
+        if (status === "passed" || status === "failed" || status === "stopped" || status === "skipped") {
+          scaleProgress += stageWeights[stageName] || 0.2;
+        } else if (status === "running") {
+          scaleProgress += (stageWeights[stageName] || 0.2) * 0.5;
+        }
+      });
+      totalProgress += Math.min(scaleProgress, 1) / total;
+    });
+
+    return Math.max(0, Math.min(100, Math.round(totalProgress * 100)));
+  }
+
+  function extractLogTags(lines) {
+    var tags = {};
+    lines.forEach(function (line) {
+      var m = line.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*\[([^\]]+)\]/);
+      if (m && m[2]) {
+        tags[m[2].trim()] = true;
+      }
+    });
+    return Object.keys(tags).sort();
+  }
+
   function renderLogs(logs) {
-    var lines = logs || [];
+    allLogs = logs || [];
+
+    var lines = allLogs.filter(function (line) {
+      var match = true;
+      if (logFilter) {
+        match = line.toLowerCase().indexOf(logFilter.toLowerCase()) !== -1;
+      }
+      if (match && activeLogTag) {
+        match = line.indexOf("[" + activeLogTag + "]") !== -1;
+      }
+      return match;
+    });
+
     els.logOutput.textContent = lines.join("\n");
     els.logOutput.scrollTop = els.logOutput.scrollHeight;
+
+    var tags = extractLogTags(allLogs);
+    renderLogTags(tags);
+  }
+
+  function renderLogTags(tags) {
+    var existing = {};
+    var buttons = els.logFilters.querySelectorAll(".log-filter");
+    Array.prototype.forEach.call(buttons, function (b) {
+      existing[b.textContent] = b;
+    });
+
+    tags.forEach(function (tag) {
+      if (existing[tag]) {
+        return;
+      }
+      var btn = document.createElement("span");
+      btn.className = "log-filter" + (tag === activeLogTag ? " active" : "");
+      btn.textContent = tag;
+      btn.addEventListener("click", function () {
+        activeLogTag = (activeLogTag === tag) ? null : tag;
+        renderLogTagsState();
+        renderLogs(allLogs);
+      });
+      els.logFilters.appendChild(btn);
+    });
+  }
+
+  function renderLogTagsState() {
+    var buttons = els.logFilters.querySelectorAll(".log-filter");
+    Array.prototype.forEach.call(buttons, function (btn) {
+      btn.classList.toggle("active", btn.textContent === activeLogTag);
+    });
+  }
+
+  function renderResultsPanel(snapshot) {
+    if (snapshot.status !== "completed" && snapshot.status !== "failed" && snapshot.status !== "stopped") {
+      els.resultsPanel.style.display = "none";
+      return;
+    }
+
+    var firstScale = (snapshot.scales || [])[0];
+    if (!firstScale) {
+      els.resultsPanel.style.display = "none";
+      return;
+    }
+
+    var artifacts = firstScale.artifacts || {};
+    var outputDir = firstScale.output_dir || "";
+    var reportPath = artifacts["comparison_report.md"] ? artifacts["comparison_report.md"].path : "";
+    var dataPath = artifacts["comparison_data.json"] ? artifacts["comparison_data.json"].path : "";
+
+    els.resultsToolbar.innerHTML = "";
+
+    if (outputDir) {
+      var openBtn = document.createElement("button");
+      openBtn.className = "ghost";
+      openBtn.textContent = "打开结果文件夹";
+      openBtn.addEventListener("click", function () {
+        window.open("file:///" + outputDir.replace(/\\/g, "/"), "_blank");
+      });
+      els.resultsToolbar.appendChild(openBtn);
+    }
+
+    if (reportPath) {
+      var dlReport = document.createElement("a");
+      dlReport.className = "button ghost";
+      dlReport.textContent = "下载 report.md";
+      dlReport.href = "file:///" + reportPath.replace(/\\/g, "/");
+      dlReport.download = "comparison_report.md";
+      dlReport.style.textDecoration = "none";
+      els.resultsToolbar.appendChild(dlReport);
+    }
+
+    if (dataPath) {
+      var dlData = document.createElement("a");
+      dlData.className = "button ghost";
+      dlData.textContent = "下载 data.json";
+      dlData.href = "file:///" + dataPath.replace(/\\/g, "/");
+      dlData.download = "comparison_data.json";
+      dlData.style.textDecoration = "none";
+      els.resultsToolbar.appendChild(dlData);
+    }
+
+    if (reportPath) {
+      fetch("file:///" + reportPath.replace(/\\/g, "/"))
+        .then(function (res) { return res.text(); })
+        .then(function (text) {
+          var preview = text.split("\n").slice(0, 50).join("\n");
+          if (text.split("\n").length > 50) {
+            preview += "\n\n...（报告较长，请下载完整文件查看）";
+          }
+          els.resultsPreview.textContent = preview;
+          els.resultsPanel.style.display = "block";
+        })
+        .catch(function () {
+          els.resultsPreview.textContent = "报告文件存在但无法预览，请使用下载按钮打开。";
+          els.resultsPanel.style.display = "block";
+        });
+    } else {
+      els.resultsPreview.textContent = "未找到 comparison_report.md";
+      els.resultsPanel.style.display = "block";
+    }
   }
 
   function renderSummary(snapshot) {
@@ -228,10 +412,19 @@
     els.sessionRoot.textContent = formatPath(snapshot.session_root);
     els.progressText.textContent = completed + " / " + total + " 个规模已完成";
 
-    var pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    var pct = computeGranularProgress(snapshot);
     els.progressBar.style.width = pct + "%";
 
-    els.substatus.textContent = snapshot.message || "就绪";
+    var stageHint = "";
+    if (running && snapshot.current_scale && snapshot.current_stage) {
+      stageHint = "正在运行：" + snapshot.current_scale + " / " + stageLabel(snapshot.current_stage);
+    }
+
+    var sub = snapshot.message || "就绪";
+    if (stageHint) {
+      sub = stageHint + " · " + sub;
+    }
+    els.substatus.textContent = sub;
 
     var env = snapshot.environment || {};
     var opensourceText = env.opensource_supported ? "可用" : "不可用";
@@ -244,7 +437,7 @@
 
     els.startButton.disabled = running;
     els.stopButton.disabled = !running;
-    els.presetFirstThree.disabled = running;
+    els.presetDefaultTwo.disabled = running;
     els.presetFast.disabled = running;
   }
 
@@ -296,6 +489,7 @@
     renderSummary(snapshot);
     renderTable(snapshot);
     renderLogs(snapshot.logs || []);
+    renderResultsPanel(snapshot);
   }
 
   function refreshState() {
@@ -329,6 +523,7 @@
     var payload = collectPayload();
     apiPost("/api/start", payload).then(function (result) {
       els.substatus.textContent = "任务 " + result.job_id + " 已启动";
+      els.resultsPanel.style.display = "none";
       return refreshState();
     }).catch(function (err) {
       els.substatus.textContent = err.message;
@@ -336,6 +531,9 @@
   }
 
   function stopJob() {
+    if (!confirm("确定要终止当前正在执行的基准测试吗？")) {
+      return;
+    }
     apiPost("/api/stop", {}).then(function () {
       els.substatus.textContent = "已请求停止";
       return refreshState();
@@ -349,7 +547,40 @@
     els.stopButton.addEventListener("click", stopJob);
     els.refreshButton.addEventListener("click", refreshState);
     els.presetFast.addEventListener("click", setFastPreset);
-    els.presetFirstThree.addEventListener("click", setFirstThreePreset);
+    els.presetDefaultTwo.addEventListener("click", setDefaultTwoScalesPreset);
+
+    els.logSearch.addEventListener("input", function () {
+      logFilter = els.logSearch.value.trim();
+      renderLogs(allLogs);
+    });
+
+    els.logClear.addEventListener("click", function () {
+      allLogs = [];
+      renderLogs([]);
+    });
+
+    els.logCopy.addEventListener("click", function () {
+      var text = els.logOutput.textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          els.logCopy.textContent = "已复制";
+          window.setTimeout(function () {
+            els.logCopy.textContent = "复制全部";
+          }, 1200);
+        });
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        els.logCopy.textContent = "已复制";
+        window.setTimeout(function () {
+          els.logCopy.textContent = "复制全部";
+        }, 1200);
+      }
+    });
   }
 
   function startPolling() {

@@ -89,9 +89,8 @@ def _ensure_analysis_raster(output_path, raster_size):
 
 def _get_raster_min_max(raster_path):
     """Return raster min/max values as floats."""
-    min_value = float(arcpy.GetRasterProperties_management(raster_path, "MINIMUM")[0])
-    max_value = float(arcpy.GetRasterProperties_management(raster_path, "MAXIMUM")[0])
-    return min_value, max_value
+    r = arcpy.Raster(raster_path)
+    return float(r.minimum), float(r.maximum)
 
 
 def _validated_raster_result(raster_path, expected_width, expected_height, metric_name, expected_min=None, expected_max=None):
@@ -200,9 +199,10 @@ class R1_CreateConstantRaster(BaseBenchmark):
 
 class R2_Resample(BaseBenchmark):
     """Benchmark: Raster Resample"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='SHP'):
         super(R2_Resample, self).__init__("R2_Resample", "raster")
+        self.output_format = output_format
         cfg = settings.get_raster_config_for_test('R2')
         self.source_size = cfg.get('resample_source_size', cfg.get('analysis_raster_size'))
         self.target_size = cfg.get('resample_target_size', cfg.get('analysis_raster_target_size'))
@@ -257,9 +257,10 @@ class R2_Resample(BaseBenchmark):
 
 class R3_Clip(BaseBenchmark):
     """Benchmark: Raster Clip"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='SHP'):
         super(R3_Clip, self).__init__("R3_Clip", "raster")
+        self.output_format = output_format
         cfg = settings.get_raster_config_for_test('R3')
         self.clip_ratio = cfg.get('analysis_raster_clip_ratio', cfg.get('clip_ratio'))
         self.input_raster = None

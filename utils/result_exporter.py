@@ -158,7 +158,8 @@ class ResultExporter(object):
         return filepath
 
     def _flatten_results(self, results):
-        """Flatten nested dictionaries one level deep."""
+        """Flatten nested dictionaries one level deep.
+        Also expand list fields like all_times into discrete columns."""
         flat_results = []
         for result in results or []:
             flat_row = {}
@@ -171,6 +172,9 @@ class ResultExporter(object):
                 if isinstance(value, dict):
                     for subkey, subvalue in value.items():
                         flat_row["{}_{}".format(key, subkey)] = subvalue
+                elif isinstance(value, (list, tuple)) and key == 'all_times':
+                    for idx, item in enumerate(value, 1):
+                        flat_row["time_{}".format(idx)] = item
                 else:
                     flat_row[key] = value
             flat_results.append(flat_row)

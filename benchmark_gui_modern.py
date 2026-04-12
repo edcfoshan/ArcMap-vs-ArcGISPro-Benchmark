@@ -315,18 +315,21 @@ class SettingsDialog(tk.Toplevel):
         tk.Label(runs_row, text=self.sm.get_text('label_runs'), bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
         self.runs_var = tk.IntVar(value=self.sm.get('test_settings.runs', 3))
         tk.Spinbox(runs_row, from_=1, to=10, textvariable=self.runs_var, width=8, font=('Microsoft YaHei', 10)).pack(side=tk.LEFT, padx=5)
+        tk.Label(runs_row, text=self.sm.get_text('tooltip_runs'), bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'], font=('Microsoft YaHei', 9)).pack(side=tk.LEFT, padx=5)
 
         warmup_row = tk.Frame(test_frame, bg=COLORS['bg_secondary'])
         warmup_row.pack(fill=tk.X, pady=2)
         tk.Label(warmup_row, text=self.sm.get_text('label_warmup'), bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
         self.warmup_var = tk.IntVar(value=self.sm.get('test_settings.warmup', 1))
         tk.Spinbox(warmup_row, from_=0, to=5, textvariable=self.warmup_var, width=8, font=('Microsoft YaHei', 10)).pack(side=tk.LEFT, padx=5)
+        tk.Label(warmup_row, text=self.sm.get_text('tooltip_warmup'), bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'], font=('Microsoft YaHei', 9)).pack(side=tk.LEFT, padx=5)
 
         workers_row = tk.Frame(test_frame, bg=COLORS['bg_secondary'])
         workers_row.pack(fill=tk.X, pady=2)
         tk.Label(workers_row, text=self.sm.get_text('label_workers'), bg=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(side=tk.LEFT)
         self.workers_var = tk.IntVar(value=self.sm.get('test_settings.mp_workers', 4))
         tk.Spinbox(workers_row, from_=1, to=16, textvariable=self.workers_var, width=8, font=('Microsoft YaHei', 10)).pack(side=tk.LEFT, padx=5)
+        tk.Label(workers_row, text=self.sm.get_text('tooltip_workers'), bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'], font=('Microsoft YaHei', 9)).pack(side=tk.LEFT, padx=5)
 
         # 选项复选框
         self.mp_var = tk.BooleanVar(value=self.sm.get('test_settings.enable_multiprocess', False))
@@ -342,6 +345,10 @@ class SettingsDialog(tk.Toplevel):
         tk.Checkbutton(cb_frame2, text=self.sm.get_text('chk_opensource'), variable=self.os_var,
                       bg='white', fg=COLORS['text_primary'], font=('Microsoft YaHei', 12),
                       selectcolor='white', activebackground='white', cursor='hand2').pack(anchor=tk.W)
+        self.os_status_label_settings = tk.Label(cb_frame2, text='',
+                                                 bg='white', fg=COLORS['text_secondary'],
+                                                 font=('Microsoft YaHei', 9))
+        self.os_status_label_settings.pack(anchor=tk.W, padx=(4, 0), pady=(4, 0))
 
         # 数据规模
         scale_frame = tk.LabelFrame(content_frame, text=self.sm.get_text('label_scale'),
@@ -624,6 +631,76 @@ class ModernBenchmarkGUI(object):
         self._create_ui()
         self._update_language()
         self._refresh_opensource_support()
+        if getattr(self.sm, 'is_first_run', False):
+            self.root.after(200, self._show_first_run_dialog)
+
+    def _show_first_run_dialog(self):
+        """首次启动引导弹窗，展示已检测到的 Python 路径。"""
+        lang = self.sm.get('language', 'zh')
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.sm.get_text('first_run_title'))
+        dialog.geometry("580x280")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.configure(bg=COLORS['bg_primary'])
+
+        # 居中
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry("+{}+{}".format(x, y))
+
+        tk.Label(dialog, text=self.sm.get_text('first_run_message'),
+                 bg=COLORS['bg_primary'], fg=COLORS['text_primary'],
+                 font=('Microsoft YaHei', 11), wraplength=540).pack(pady=(16, 10), padx=20)
+
+        # Python 2.7 路径
+        py27_frame = tk.Frame(dialog, bg=COLORS['bg_primary'])
+        py27_frame.pack(fill='x', padx=30, pady=4)
+        tk.Label(py27_frame, text=self.sm.get_text('first_run_py27'),
+                 bg=COLORS['bg_primary'], fg=COLORS['text_primary'],
+                 font=('Microsoft YaHei', 10)).pack(side='left')
+        py27_var = tk.StringVar(value=self.sm.get('python_paths.python27', ''))
+        tk.Entry(py27_frame, textvariable=py27_var, font=('Microsoft YaHei', 10), width=45).pack(side='left', padx=5, fill='x', expand=True)
+
+        # Python 3.x 路径
+        py3_frame = tk.Frame(dialog, bg=COLORS['bg_primary'])
+        py3_frame.pack(fill='x', padx=30, pady=4)
+        tk.Label(py3_frame, text=self.sm.get_text('first_run_py3'),
+                 bg=COLORS['bg_primary'], fg=COLORS['text_primary'],
+                 font=('Microsoft YaHei', 10)).pack(side='left')
+        py3_var = tk.StringVar(value=self.sm.get('python_paths.python3', ''))
+        tk.Entry(py3_frame, textvariable=py3_var, font=('Microsoft YaHei', 10), width=45).pack(side='left', padx=5, fill='x', expand=True)
+
+        def do_auto_detect():
+            detected = self.sm.auto_detect_python_paths()
+            if detected.get('python27'):
+                py27_var.set(detected['python27'])
+            if detected.get('python3'):
+                py3_var.set(detected['python3'])
+            self.sm.save_config()
+
+        def do_confirm():
+            self.sm.set('python_paths.python27', py27_var.get().strip())
+            self.sm.set('python_paths.python3', py3_var.get().strip())
+            self.sm.save_config()
+            if hasattr(self, 'py27_var'):
+                self.py27_var.set(py27_var.get().strip())
+            if hasattr(self, 'py3_var'):
+                self.py3_var.set(py3_var.get().strip())
+            self._refresh_opensource_support()
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg=COLORS['bg_primary'])
+        btn_frame.pack(pady=16)
+        tk.Button(btn_frame, text=self.sm.get_text('btn_auto_detect'),
+                  command=do_auto_detect,
+                  bg=COLORS['accent_secondary'], fg='white',
+                  font=('Microsoft YaHei', 10)).pack(side='left', padx=8)
+        tk.Button(btn_frame, text=self.sm.get_text('btn_confirm'),
+                  command=do_confirm,
+                  bg=COLORS['accent_primary'], fg='white',
+                  font=('Microsoft YaHei', 10)).pack(side='left', padx=8)
 
     def _setup_window(self):
         """设置窗口"""
@@ -936,7 +1013,7 @@ class ModernBenchmarkGUI(object):
             return '不可用：{}'.format(self.os_status_reason) if lang == 'zh' else 'Unavailable: {}'.format(self.os_status_reason)
 
         missing = self.os_missing_modules or list(OPEN_SOURCE_PACKAGES)
-        return '未安装：{}'.format(', '.join(missing)) if lang == 'zh' else 'Missing: {}'.format(', '.join(missing))
+        return '缺少依赖：{}'.format('、'.join(missing)) if lang == 'zh' else 'Missing dependencies: {}'.format(', '.join(missing))
 
     def _refresh_opensource_support(self):
         """刷新开源库可用性。"""
@@ -963,6 +1040,12 @@ class ModernBenchmarkGUI(object):
             self.os_status_prefix_label.config(text=self.sm.get_text('label_os_status'))
         if hasattr(self, 'os_status_label'):
             self.os_status_label.config(text=self._format_opensource_status())
+        if hasattr(self, 'os_status_label_settings'):
+            self.os_status_label_settings.config(text=self._format_opensource_status())
+            if not self.os_available and self.os_missing_modules:
+                self.os_status_label_settings.config(fg=COLORS['bad'])
+            else:
+                self.os_status_label_settings.config(fg=COLORS['text_secondary'])
         if hasattr(self, 'recheck_os_btn'):
             self.recheck_os_btn.config(text=self.sm.get_text('btn_recheck'))
             self.recheck_os_btn.config(state='normal' if py3_ready and not self.os_installing else 'disabled')
@@ -1243,12 +1326,20 @@ class ModernBenchmarkGUI(object):
             (self.sm.get_text('label_warmup'), self.warmup_var, 0, 10),
             (self.sm.get_text('label_workers'), self.workers_var, 1, 16),
         ]
+        tooltip_map = {
+            self.sm.get_text('label_runs'): self.sm.get_text('tooltip_runs'),
+            self.sm.get_text('label_warmup'): self.sm.get_text('tooltip_warmup'),
+            self.sm.get_text('label_workers'): self.sm.get_text('tooltip_workers'),
+        }
         for index, (label_text, var, min_value, max_value) in enumerate(param_specs):
             field = tk.Frame(params_row, bg=COLORS['bg_secondary'])
             field.pack(side='left', fill='x', expand=True, padx=(0 if index == 0 else 4, 0))
             tk.Label(field, text=label_text,
                     bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
                     font=self._font(9)).pack(anchor='w')
+            tk.Label(field, text=tooltip_map.get(label_text, ''),
+                     bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
+                     font=self._font(7)).pack(anchor='w')
             tk.Spinbox(field, from_=min_value, to=max_value, textvariable=var, width=6,
                       font=self._font(9)).pack(fill='x', pady=(0, 0))
 
@@ -2330,6 +2421,12 @@ class ModernBenchmarkGUI(object):
 
         if test_type == 'os':
             cmd.append('--opensource')
+
+        # 新 runner 参数：格式与复杂度（默认兼容旧行为）
+        fmt = self.format_var.get() if hasattr(self, 'format_var') else self.sm.get('test_settings.format', 'SHP')
+        complexity = self.complexity_var.get() if hasattr(self, 'complexity_var') else self.sm.get('test_settings.complexity', 'simple')
+        cmd.extend(['--format', str(fmt)])
+        cmd.extend(['--complexity', str(complexity)])
 
         if self.mp_var.get():
             cmd.append('--multiprocess')

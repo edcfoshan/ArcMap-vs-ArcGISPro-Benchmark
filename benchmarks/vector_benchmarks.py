@@ -25,6 +25,7 @@ from utils.benchmark_inputs import (
     get_analysis_boundary_path,
     get_analysis_crs,
     get_benchmark_gdb_path,
+    get_input_feature_path,
 )
 from utils.benchmark_shapes import factor_grid_dimensions, expected_offset_grid_intersections
 
@@ -181,21 +182,27 @@ class V2_CreateRandomPoints(BaseBenchmark):
 
 class V3_Buffer(BaseBenchmark):
     """Benchmark: Buffer Analysis"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='SHP'):
         super(V3_Buffer, self).__init__("V3_Buffer", "vector")
         self.input_fc = None
         self.output_fc = None
+        self.output_format = output_format
         cfg = settings.get_vector_config_for_test('V3')
         self.num_points = cfg['buffer_points']
-    
+
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
-        
+
+        self.input_fc = get_input_feature_path("buffer_points", settings.DATA_DIR)
         gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.input_fc = os.path.join(gdb_path, "buffer_points")
-        self.output_fc = os.path.join(settings.DATA_DIR, "V3_buffer_output.shp")
+        if self.output_format == 'GPKG':
+            self.output_fc = os.path.join(settings.DATA_DIR, "V3_buffer_output.gpkg")
+        elif self.output_format == 'GDB':
+            self.output_fc = os.path.join(gdb_path, "V3_buffer_output")
+        else:
+            self.output_fc = os.path.join(settings.DATA_DIR, "V3_buffer_output.shp")
 
         if not arcpy.Exists(self.input_fc):
             arcpy.CreateRandomPoints_management(
@@ -235,25 +242,31 @@ class V3_Buffer(BaseBenchmark):
 
 class V4_Intersect(BaseBenchmark):
     """Benchmark: Intersect Analysis"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='SHP'):
         super(V4_Intersect, self).__init__("V4_Intersect", "vector")
         self.input_a = None
         self.input_b = None
         self.output_fc = None
+        self.output_format = output_format
         cfg = settings.get_vector_config_for_test('V4')
         rows_a, cols_a = factor_grid_dimensions(cfg['intersect_features_a'])
         rows_b, cols_b = factor_grid_dimensions(cfg['intersect_features_b'])
         self.expected_features = expected_offset_grid_intersections(rows_a, cols_a, rows_b, cols_b)
-    
+
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
-        
+
         gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.input_a = os.path.join(gdb_path, "test_polygons_a")
-        self.input_b = os.path.join(gdb_path, "test_polygons_b")
-        self.output_fc = os.path.join(settings.DATA_DIR, "V4_intersect_output.shp")
+        self.input_a = get_input_feature_path("test_polygons_a", settings.DATA_DIR)
+        self.input_b = get_input_feature_path("test_polygons_b", settings.DATA_DIR)
+        if self.output_format == 'GPKG':
+            self.output_fc = os.path.join(settings.DATA_DIR, "V4_intersect_output.gpkg")
+        elif self.output_format == 'GDB':
+            self.output_fc = os.path.join(gdb_path, "V4_intersect_output")
+        else:
+            self.output_fc = os.path.join(settings.DATA_DIR, "V4_intersect_output.shp")
     
     def teardown(self):
         if self.output_fc and arcpy.Exists(self.output_fc):
@@ -282,23 +295,29 @@ class V4_Intersect(BaseBenchmark):
 
 class V5_SpatialJoin(BaseBenchmark):
     """Benchmark: Spatial Join"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='SHP'):
         super(V5_SpatialJoin, self).__init__("V5_SpatialJoin", "vector")
         self.target_features = None
         self.join_features = None
         self.output_fc = None
-    
+        self.output_format = output_format
+
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
-        
+
         gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.target_features = os.path.join(gdb_path, "spatial_join_points")
-        self.join_features = os.path.join(gdb_path, "spatial_join_polygons")
+        self.target_features = get_input_feature_path("spatial_join_points", settings.DATA_DIR)
+        self.join_features = get_input_feature_path("spatial_join_polygons", settings.DATA_DIR)
         # Use version-specific output to avoid lock conflicts between Py2/Py3
         py_version = "py2" if sys.version_info[0] < 3 else "py3"
-        self.output_fc = os.path.join(settings.DATA_DIR, "V5_spatial_join_output_{}.shp".format(py_version))
+        if self.output_format == 'GPKG':
+            self.output_fc = os.path.join(settings.DATA_DIR, "V5_spatial_join_output_{}.gpkg".format(py_version))
+        elif self.output_format == 'GDB':
+            self.output_fc = os.path.join(gdb_path, "V5_spatial_join_output_{}".format(py_version))
+        else:
+            self.output_fc = os.path.join(settings.DATA_DIR, "V5_spatial_join_output_{}.shp".format(py_version))
     
     def teardown(self):
         if self.output_fc and arcpy.Exists(self.output_fc):
@@ -337,9 +356,8 @@ class V6_CalculateField(BaseBenchmark):
     def setup(self):
         arcpy.env.workspace = settings.DATA_DIR
         arcpy.env.overwriteOutput = True
-        
-        gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.input_fc = os.path.join(gdb_path, "calculate_field_fc")
+
+        self.input_fc = get_input_feature_path("calculate_field_fc", settings.DATA_DIR)
         self.working_fc = os.path.join(settings.DATA_DIR, "V6_calculate_field.shp")
         
         # Add field if not exists

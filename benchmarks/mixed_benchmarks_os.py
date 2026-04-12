@@ -29,6 +29,7 @@ from utils.benchmark_inputs import (
     get_analysis_crs,
     get_analysis_raster_path,
     get_benchmark_gdb_path,
+    get_input_feature_path_os,
 )
 
 
@@ -82,16 +83,16 @@ class MixedBenchmarksOS(object):
 class M1_PolygonToRaster_OS(BaseBenchmark):
     """Benchmark: Polygon to Raster Conversion using Rasterio"""
 
-    def __init__(self):
+    def __init__(self, output_format='GPKG'):
         super(M1_PolygonToRaster_OS, self).__init__("M1_PolygonToRaster_OS", "mixed_os")
         self.gdb_path = None
         self.input_layer = None
         self.output_path = None
         self.cell_size = None
+        self.output_format = output_format
 
     def setup(self):
-        self.gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.input_layer = "test_polygons_a"
+        self.input_path, self.input_layer = get_input_feature_path_os("test_polygons_a", settings.DATA_DIR)
         self.output_path = os.path.join(settings.DATA_DIR, "M1_poly_to_ras_os.tif")
 
         cfg = settings.get_raster_config_for_test('M1')
@@ -110,8 +111,11 @@ class M1_PolygonToRaster_OS(BaseBenchmark):
                 pass
 
     def run_single(self):
-        # Read polygons (using layer parameter)
-        gdf = gpd.read_file(self.gdb_path, layer=self.input_layer)
+        # Read polygons
+        if self.input_layer:
+            gdf = gpd.read_file(self.input_path, layer=self.input_layer)
+        else:
+            gdf = gpd.read_file(self.input_path)
 
         # Rasterize
         cfg = settings.get_raster_config_for_test('M1')

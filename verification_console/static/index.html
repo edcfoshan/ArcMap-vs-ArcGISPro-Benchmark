@@ -35,7 +35,7 @@
             <p>这里控制的是命令行脚本，不会改动原有的桌面 GUI。</p>
           </div>
           <div class="toolbar">
-            <button type="button" id="preset-first-three">默认两档</button>
+            <button type="button" id="preset-default-two">默认 tiny+small</button>
             <button type="button" class="ghost" id="preset-fast">快速预设</button>
             <button type="button" class="ghost" id="refresh">刷新</button>
           </div>
@@ -142,11 +142,30 @@
         </table>
       </section>
 
+      <section class="panel results-panel" id="results-panel" style="display:none;">
+        <div class="panel-head">
+          <div>
+            <h2>结果</h2>
+            <p>验证完成后，可在此预览报告、下载数据或打开结果文件夹。</p>
+          </div>
+          <div class="toolbar" id="results-toolbar"></div>
+        </div>
+        <div class="results-preview" id="results-preview"></div>
+      </section>
+
       <section class="panel log-panel">
         <div class="panel-head">
           <div>
             <h2>实时日志</h2>
             <p>调度器和脚本输出会按时间顺序显示在这里。</p>
+          </div>
+        </div>
+        <div class="log-toolbar">
+          <input type="text" id="log-search" placeholder="搜索日志...">
+          <div class="log-filters" id="log-filters"></div>
+          <div class="log-actions">
+            <button type="button" class="ghost" id="log-copy">复制全部</button>
+            <button type="button" class="ghost" id="log-clear">清空</button>
           </div>
         </div>
         <pre id="log-output" class="console"></pre>

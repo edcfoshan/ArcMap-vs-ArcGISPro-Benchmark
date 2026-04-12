@@ -1,0 +1,129 @@
+# Experiment matrix for reproducible 3-way benchmark
+# ArcGIS Desktop (Py2) vs ArcGIS Pro (Py3) vs Open-Source
+---
+version: "1.0"
+description: "6-task x 5-scale x 3-format x 3-complexity matrix"
+
+tasks:
+  - id: "Buffer"
+    name: "Vector Buffer"
+    category: "vector"
+    description: "Buffer analysis on point features"
+    input_type: "vector"
+    output_type: "vector"
+    validates_by: "feature_count"
+    equivalence_notes:
+      - "Uniform projected CRS and planar buffer"
+      - "Buffer distance 1000 meters"
+      - "ArcGIS Buffer method vs Shapely GEOS implementation may differ in vertex detail"
+
+  - id: "Intersect"
+    name: "Overlay Intersect"
+    category: "vector"
+    description: "Topological intersection of two polygon layers"
+    input_type: "vector"
+    output_type: "vector"
+    validates_by: "feature_count"
+    equivalence_notes:
+      - "GeoPandas overlay is geometry-type sensitive and may invoke make_valid"
+      - "ArcGIS may repair geometries internally; repair overhead recorded as separate metric"
+
+  - id: "SpatialJoin"
+    name: "Spatial Join"
+    category: "vector"
+    description: "Spatial join points to polygons"
+    input_type: "vector"
+    output_type: "vector"
+    validates_by: "feature_count"
+    equivalence_notes:
+      - "Predicate fixed to 'intersects' or 'within' per run"
+      - "JOIN_ONE_TO_ONE semantics matched by deduplicating sjoin results"
+
+  - id: "Resample"
+    name: "Raster Resample"
+    category: "raster"
+    description: "Resample raster to different cell size"
+    input_type: "raster"
+    output_type: "raster"
+    validates_by: "raster_dimensions"
+    equivalence_notes:
+      - "Resampling method fixed to NEAREST"
+      - "Output alignment checked by pixel dimensions, not pixel-perfect equality"
+
+  - id: "Clip"
+    name: "Raster Clip/Mask"
+    category: "raster"
+    description: "Clip raster by extent"
+    input_type: "raster"
+    output_type: "raster"
+    validates_by: "raster_dimensions"
+    equivalence_notes:
+      - "Centered window clip with exact dimension contract"
+      - "Rasterio mask semantics aligned via window extraction"
+
+  - id: "PolygonToRaster"
+    name: "Polygon to Raster"
+    category: "mixed"
+    description: "Convert polygons to raster"
+    input_type: "vector"
+    output_type: "raster"
+    validates_by: "raster_dimensions_and_max_value"
+    equivalence_notes:
+      - "CELL_CENTER assignment in ArcGIS; Rasterio rasterize without all_touched"
+      - "Value field fixed to poly_id"
+
+scales:
+  tiny:
+    description: "Quick verification"
+  small:
+    description: "Debugging scale"
+  standard:
+    description: "Primary benchmarking scale"
+  medium:
+    description: "Heavier than standard"
+  large:
+    description: "Maximum tested scale"
+
+formats:
+  - id: "SHP"
+    name: "ESRI Shapefile"
+    driver: "ESRI Shapefile"
+    extension: ".shp"
+  - id: "GPKG"
+    name: "GeoPackage"
+    driver: "GPKG"
+    extension: ".gpkg"
+    is_neutral: true
+  - id: "GDB"
+    name: "File Geodatabase"
+    driver: "OpenFileGDB"
+    extension: ""   # for ArcPy this means a feature class inside the GDB
+
+complexity_tiers:
+  - id: "simple"
+    name: "Simple"
+    description: "Regular grid/rectangles with low vertex count"
+  - id: "medium"
+    name: "Medium"
+    description: "OSM-like roads/landuse with moderate vertex count"
+  - id: "complex"
+    name: "Complex"
+    description: "Building footprints/coastline-like with high vertex count"
+
+execution:
+  test_runs: 3
+  warmup_runs: 1
+  cold_start_runs: 0
+  memory_monitoring: true
+  progress_heartbeat_interval: 2
+
+parallel_modes:
+  - id: "single"
+    name: "Single Process"
+  - id: "mp_external"
+    name: "External Multiprocess"
+    description: "Chunked multiprocess implemented consistently across all stacks"
+  - id: "mp_arcpy"
+    name: "ArcPy Parallel Processing Factor"
+    description: "Only honored by specific ArcGIS Pro tools"
+    stacks: ["arcpy_pro"]

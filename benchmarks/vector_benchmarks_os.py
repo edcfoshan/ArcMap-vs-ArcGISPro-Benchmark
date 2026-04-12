@@ -29,6 +29,7 @@ from utils.benchmark_inputs import (
     get_analysis_boundary_extent,
     get_analysis_crs,
     get_benchmark_gdb_path,
+    get_input_feature_path_os,
 )
 from utils.benchmark_shapes import factor_grid_dimensions, expected_offset_grid_intersections
 
@@ -177,108 +178,128 @@ class V2_CreateRandomPoints_OS(BaseBenchmark):
 
 class V3_Buffer_OS(BaseBenchmark):
     """Benchmark: Buffer Analysis using GeoPandas"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='GPKG'):
         super(V3_Buffer_OS, self).__init__("V3_Buffer_OS", "vector_os")
         self.gdb_path = None
         self.input_layer = None
         self.output_path = None
         self.buffer_distance = 1000.0  # meters
-    
+        self.output_format = output_format
+
     def setup(self):
-        self.gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.input_layer = "buffer_points"
-        self.output_path = os.path.join(settings.DATA_DIR, "V3_buffer_output_os.gpkg")
-    
+        self.input_path, self.input_layer = get_input_feature_path_os("buffer_points", settings.DATA_DIR)
+        ext = ".gpkg" if self.output_format == "GPKG" else ".shp" if self.output_format == "SHP" else ""
+        self.output_path = os.path.join(settings.DATA_DIR, "V3_buffer_output_os{}".format(ext))
+
     def teardown(self):
         if self.output_path and os.path.exists(self.output_path):
             try:
                 os.remove(self.output_path)
             except:
                 pass
-    
+
     def run_single(self):
-        # Read input points from GDB (using layer parameter)
-        gdf = gpd.read_file(self.gdb_path, layer=self.input_layer)
+        # Read input points
+        if self.input_layer:
+            gdf = gpd.read_file(self.input_path, layer=self.input_layer)
+        else:
+            gdf = gpd.read_file(self.input_path)
         expected_count = len(gdf)
         
         # Buffer in a projected CRS so the 1 km distance matches the ArcPy benchmark.
         gdf = buffer_in_projected_crs(gdf, self.buffer_distance)
         
         # Save output
-        gdf.to_file(self.output_path, driver="GPKG")
-        
+        driver = "GPKG" if self.output_format == "GPKG" else "ESRI Shapefile"
+        gdf.to_file(self.output_path, driver=driver)
+
         return _validated_count_result(len(gdf), expected_count, "buffer_feature_count")
 
 
 class V4_Intersect_OS(BaseBenchmark):
     """Benchmark: Intersect Analysis using GeoPandas"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='GPKG'):
         super(V4_Intersect_OS, self).__init__("V4_Intersect_OS", "vector_os")
         self.gdb_path = None
         self.input_a_layer = None
         self.input_b_layer = None
         self.output_path = None
+        self.output_format = output_format
         cfg = settings.get_vector_config_for_test('V4')
         rows_a, cols_a = factor_grid_dimensions(cfg['intersect_features_a'])
         rows_b, cols_b = factor_grid_dimensions(cfg['intersect_features_b'])
         self.expected_features = expected_offset_grid_intersections(rows_a, cols_a, rows_b, cols_b)
-    
+
     def setup(self):
-        self.gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.input_a_layer = "test_polygons_a"
-        self.input_b_layer = "test_polygons_b"
-        self.output_path = os.path.join(settings.DATA_DIR, "V4_intersect_output_os.gpkg")
-    
+        self.input_a_path, self.input_a_layer = get_input_feature_path_os("test_polygons_a", settings.DATA_DIR)
+        self.input_b_path, self.input_b_layer = get_input_feature_path_os("test_polygons_b", settings.DATA_DIR)
+        ext = ".gpkg" if self.output_format == "GPKG" else ".shp" if self.output_format == "SHP" else ""
+        self.output_path = os.path.join(settings.DATA_DIR, "V4_intersect_output_os{}".format(ext))
+
     def teardown(self):
         if self.output_path and os.path.exists(self.output_path):
             try:
                 os.remove(self.output_path)
             except:
                 pass
-    
+
     def run_single(self):
-        # Read input layers (using layer parameter)
-        gdf_a = gpd.read_file(self.gdb_path, layer=self.input_a_layer)
-        gdf_b = gpd.read_file(self.gdb_path, layer=self.input_b_layer)
+        # Read input layers
+        if self.input_a_layer:
+            gdf_a = gpd.read_file(self.input_a_path, layer=self.input_a_layer)
+        else:
+            gdf_a = gpd.read_file(self.input_a_path)
+        if self.input_b_layer:
+            gdf_b = gpd.read_file(self.input_b_path, layer=self.input_b_layer)
+        else:
+            gdf_b = gpd.read_file(self.input_b_path)
         
         # Perform intersection
         result = gpd.overlay(gdf_a, gdf_b, how='intersection')
         
         # Save output
-        result.to_file(self.output_path, driver="GPKG")
-        
+        driver = "GPKG" if self.output_format == "GPKG" else "ESRI Shapefile"
+        result.to_file(self.output_path, driver=driver)
+
         return _validated_count_result(len(result), self.expected_features, "intersect_feature_count")
 
 
 class V5_SpatialJoin_OS(BaseBenchmark):
     """Benchmark: Spatial Join using GeoPandas"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='GPKG'):
         super(V5_SpatialJoin_OS, self).__init__("V5_SpatialJoin_OS", "vector_os")
         self.gdb_path = None
         self.target_layer = None
         self.join_layer = None
         self.output_path = None
-    
+        self.output_format = output_format
+
     def setup(self):
-        self.gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.target_layer = "spatial_join_points"
-        self.join_layer = "spatial_join_polygons"
-        self.output_path = os.path.join(settings.DATA_DIR, "V5_spatial_join_output_os.gpkg")
-    
+        self.target_path, self.target_layer = get_input_feature_path_os("spatial_join_points", settings.DATA_DIR)
+        self.join_path, self.join_layer = get_input_feature_path_os("spatial_join_polygons", settings.DATA_DIR)
+        ext = ".gpkg" if self.output_format == "GPKG" else ".shp" if self.output_format == "SHP" else ""
+        self.output_path = os.path.join(settings.DATA_DIR, "V5_spatial_join_output_os{}".format(ext))
+
     def teardown(self):
         if self.output_path and os.path.exists(self.output_path):
             try:
                 os.remove(self.output_path)
             except:
                 pass
-    
+
     def run_single(self):
-        # Read input layers (using layer parameter)
-        target = gpd.read_file(self.gdb_path, layer=self.target_layer)
-        join = gpd.read_file(self.gdb_path, layer=self.join_layer)
+        # Read input layers
+        if self.target_layer:
+            target = gpd.read_file(self.target_path, layer=self.target_layer)
+        else:
+            target = gpd.read_file(self.target_path)
+        if self.join_layer:
+            join = gpd.read_file(self.join_path, layer=self.join_layer)
+        else:
+            join = gpd.read_file(self.join_path)
         
         # Perform spatial join
         result = gpd.sjoin(target, join, how='left', predicate='within')
@@ -287,8 +308,9 @@ class V5_SpatialJoin_OS(BaseBenchmark):
         result = result.loc[~result.index.duplicated(keep='first')]
         
         # Save output
-        result.to_file(self.output_path, driver="GPKG")
-        
+        driver = "GPKG" if self.output_format == "GPKG" else "ESRI Shapefile"
+        result.to_file(self.output_path, driver=driver)
+
         return _validated_count_result(len(result), len(target), "spatial_join_feature_count")
 
 
@@ -302,20 +324,22 @@ class V6_CalculateField_OS(BaseBenchmark):
         self.output_path = None
     
     def setup(self):
-        self.gdb_path = get_benchmark_gdb_path(settings.DATA_DIR)
-        self.input_layer = "calculate_field_fc"
+        self.input_path, self.input_layer = get_input_feature_path_os("calculate_field_fc", settings.DATA_DIR)
         self.output_path = os.path.join(settings.DATA_DIR, "V6_calculate_field_os.gpkg")
-    
+
     def teardown(self):
         if self.output_path and os.path.exists(self.output_path):
             try:
                 os.remove(self.output_path)
             except:
                 pass
-    
+
     def run_single(self):
-        # Read input (using layer parameter)
-        gdf = gpd.read_file(self.gdb_path, layer=self.input_layer)
+        # Read input
+        if self.input_layer:
+            gdf = gpd.read_file(self.input_path, layer=self.input_layer)
+        else:
+            gdf = gpd.read_file(self.input_path)
         
         # Perform field calculation (vectorized)
         gdf['calc_field'] = gdf['poly_id'] * 2.5 + 100

@@ -4,3 +4,11 @@ __pycache__/
 *.log
 results/
 
+# Generated test data and run artifacts
+direct_test_*/
+direct_tiny_*/
+playwright_outputs/
+verification_run/
+console_screenshot.png
+academic_review_*.md
+

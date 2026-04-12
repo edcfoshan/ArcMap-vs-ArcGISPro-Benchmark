@@ -2,10 +2,9 @@
 """
 Generate benchmark input data for ArcGIS performance tests.
 
-The generator now prefers a cached OSM sample extract, converts the selected
-layers into a file geodatabase, and then derives the benchmark-ready feature
-classes and rasters from that local cache. If OSM preparation fails, it falls
-back to deterministic synthetic data so the benchmark can still run.
+Supports three output formats (GDB, SHP, GPKG) and three complexity tiers
+(simple, medium, complex). Generates base data in GDB first, then exports
+to the requested format.
 """
 from __future__ import print_function, division, absolute_import
 
@@ -19,7 +18,6 @@ from config import settings
 from utils.benchmark_manifest import load_manifest, save_manifest
 from utils.benchmark_shapes import factor_grid_dimensions, derive_block_size, build_block_pattern_array
 from utils.gis_cleanup import clear_workspace_cache, remove_dataset_artifacts
-from utils.osm_samples import ensure_osm_sample_cache
 from utils.raster_utils import create_constant_raster, create_block_pattern_raster
 
 try:
@@ -30,7 +28,7 @@ except ImportError:
     arcpy = None
 
 
-MANIFEST_VERSION = 2
+MANIFEST_VERSION = 3
 PROJECTED_WKID = 3857
 COMMON_ID_FIELDS = [
     ('poly_id', 'LONG'),
@@ -48,6 +46,21 @@ OSM_LAYER_TARGETS = [
     ('landuse', 'osm_landuse'),
     ('pois', 'osm_pois'),
     ('places', 'osm_places'),
+]
+
+ALL_INPUT_DATASETS = [
+    'analysis_boundary',
+    'buffer_points',
+    'spatial_join_points',
+    'spatial_join_polygons',
+    'calculate_field_fc',
+    'test_polygons_a',
+    'test_polygons_b',
+    'osm_roads',
+    'osm_buildings',
+    'osm_landuse',
+    'osm_pois',
+    'osm_places',
 ]
 
 
@@ -198,7 +211,7 @@ def _create_feature_class(output_fc, geometry_type, spatial_reference):
 
 
 def _add_common_fields(feature_class):
-    existing = {field.name.lower() for field in arcpy.ListFields(feature_class)}
+    existing = {field.name.lower(): field for field in arcpy.ListFields(feature_class)}
     for field_spec in COMMON_ID_FIELDS:
         name = field_spec[0]
         if name.lower() in existing:
@@ -294,6 +307,74 @@ def _create_fishnet(feature_class, extent, rows, cols, source_mode, source_label
         pass
     _add_common_fields(feature_class)
     _populate_common_fields(feature_class, source_mode, source_label)
+    return feature_class
+
+
+def _densify_polygon(polygon, interval_meters):
+    """Densify a polygon boundary by adding vertices at regular intervals."""
+    if polygon is None:
+        return None
+    sr = polygon.spatialReference
+    parts = arcpy.Array()
+    for part in polygon:
+        if part is None:
+            continue
+        new_part = arcpy.Array()
+        n = len(part)
+        for i in range(n):
+            p1 = part[i]
+            p2 = part[(i + 1) % n]
+            new_part.append(arcpy.Point(p1.X, p1.Y))
+            dist = ((p2.X - p1.X) ** 2 + (p2.Y - p1.Y) ** 2) ** 0.5
+            if dist > interval_meters * 1.5:
+                steps = max(1, int(dist / interval_meters))
+                for s in range(1, steps):
+                    t = float(s) / steps
+                    x = p1.X + t * (p2.X - p1.X)
+                    y = p1.Y + t * (p2.Y - p1.Y)
+                    new_part.append(arcpy.Point(x, y))
+        new_part.append(new_part[0])
+        parts.add(new_part)
+    return arcpy.Polygon(parts, sr)
+
+
+def _create_complex_polygon(feature_class, target_count, extent, source_mode, source_label):
+    """Create complex star-shaped polygons with many vertices."""
+    _delete_path(feature_class)
+    spatial_reference = _projected_spatial_reference()
+    _create_feature_class(feature_class, 'POLYGON', spatial_reference)
+    _add_common_fields(feature_class)
+
+    xmin, ymin, xmax, ymax = extent
+    cx = (xmin + xmax) / 2.0
+    cy = (ymin + ymax) / 2.0
+    max_radius = min(xmax - xmin, ymax - ymin) / (max(1, int(target_count) ** 0.5) * 4.0)
+    rng = random.Random(314159 + int(target_count))
+
+    with arcpy.da.InsertCursor(feature_class, ['SHAPE@', 'poly_id', 'group_id', 'class_id', 'priority', 'weight', 'source_tag', 'osm_source']) as cursor:
+        for index in range(1, int(target_count) + 1):
+            x = rng.uniform(xmin + max_radius, xmax - max_radius)
+            y = rng.uniform(ymin + max_radius, ymax - max_radius)
+            num_points = rng.randint(12, 36)
+            array = arcpy.Array()
+            for k in range(num_points):
+                angle = 2.0 * 3.141592653589793 * k / num_points
+                radius = max_radius * (0.3 + 0.7 * rng.random())
+                px = x + radius * (rng.random() - 0.5) * 2.0
+                py = y + radius * (rng.random() - 0.5) * 2.0
+                array.append(arcpy.Point(px, py))
+            array.append(array[0])
+            polygon = arcpy.Polygon(array, spatial_reference)
+            cursor.insertRow([
+                polygon,
+                index,
+                ((index - 1) % 64) + 1,
+                ((index - 1) % 11) + 1,
+                ((index - 1) % 7) + 1,
+                round((((index - 1) % 100) + 1) / 100.0, 4),
+                source_mode,
+                source_label
+            ])
     return feature_class
 
 
@@ -489,16 +570,75 @@ def _load_geometry_samples(feature_class, limit=None):
     return geometries
 
 
+def _export_to_shp(gdb_path, output_dir, datasets):
+    """Export GDB feature classes to individual shapefiles."""
+    _ensure_dir(output_dir)
+    for name in datasets or []:
+        source = os.path.join(gdb_path, name)
+        if not arcpy.Exists(source):
+            continue
+        dest = os.path.join(output_dir, '{}.shp'.format(name))
+        _delete_path(dest)
+        try:
+            arcpy.CopyFeatures_management(source, dest)
+        except Exception as exc:
+            print("  [Warning] Failed to export {} to SHP: {}".format(name, exc))
+
+
+def _export_to_gpkg(gdb_path, gpkg_path, datasets):
+    """Export GDB feature classes to a GeoPackage."""
+    _delete_path(gpkg_path)
+    has_gpd = False
+    try:
+        import geopandas as gpd
+        has_gpd = True
+    except Exception:
+        pass
+
+    for name in datasets or []:
+        source = os.path.join(gdb_path, name)
+        if not arcpy.Exists(source):
+            continue
+        try:
+            if has_gpd:
+                import geopandas as gpd
+                gdf = gpd.read_file(gdb_path, layer=name)
+                gdf.to_file(gpkg_path, layer=name, driver="GPKG")
+            else:
+                dest = os.path.join(gpkg_path, name)
+                arcpy.CopyFeatures_management(source, dest)
+        except Exception as exc:
+            print("  [Warning] Failed to export {} to GPKG: {}".format(name, exc))
+
+
+def _densify_feature_class(source_fc, output_fc, interval_meters=20.0):
+    """Create a densified copy of a feature class for complex geometries."""
+    _delete_path(output_fc)
+    sr = arcpy.Describe(source_fc).spatialReference if arcpy.Exists(source_fc) else _projected_spatial_reference()
+    _create_feature_class(output_fc, 'POLYGON', sr)
+    _add_common_fields(output_fc)
+    source_fields = ['SHAPE@'] + [f[0] for f in COMMON_ID_FIELDS]
+    out_fields = ['SHAPE@'] + [f[0] for f in COMMON_ID_FIELDS]
+    with arcpy.da.SearchCursor(source_fc, source_fields) as scursor:
+        with arcpy.da.InsertCursor(output_fc, out_fields) as icursor:
+            for row in scursor:
+                geom = row[0]
+                if geom is not None:
+                    geom = _densify_polygon(geom, interval_meters)
+                icursor.insertRow([geom] + list(row[1:]))
+    return output_fc
+
+
 class TestDataGenerator(object):
     """Generate benchmark input data and cache metadata."""
 
-    def __init__(self):
+    def __init__(self, output_format=None, complexity=None):
         self.scale = settings.DATA_SCALE
         self.vector_config = copy.deepcopy(settings.VECTOR_CONFIG)
         self.raster_config = copy.deepcopy(settings.RASTER_CONFIG)
+        self.output_format = str(output_format or 'GDB').upper()
+        self.complexity = str(complexity or 'simple').lower()
         if str(self.scale).lower() == 'standard':
-            # standard 允许按测试项覆盖输入规模，这里把覆盖后的关键字段映射回
-            # 实际生成的输入图层，以便生成/复用校验保持一致。
             v3 = settings.get_vector_config_for_test('V3')
             v4 = settings.get_vector_config_for_test('V4')
             v5 = settings.get_vector_config_for_test('V5')
@@ -510,16 +650,22 @@ class TestDataGenerator(object):
             self.vector_config['spatial_join_polygons'] = int(v5.get('spatial_join_polygons', self.vector_config.get('spatial_join_polygons', 0)))
             self.vector_config['calculate_field_records'] = int(v6.get('calculate_field_records', self.vector_config.get('calculate_field_records', 0)))
 
-            # analysis_raster.tif 主要供混合项与回退逻辑使用，按 M2 口径对齐。
             m2 = settings.get_raster_config_for_test('M2')
             if isinstance(m2, dict) and m2:
                 self.raster_config['analysis_raster_size'] = int(m2.get('analysis_raster_size', self.raster_config.get('analysis_raster_size', 0)))
         self.root_dir = os.path.abspath(settings.DATA_DIR)
         self.gdb_name = getattr(settings, 'DEFAULT_GDB_NAME', 'benchmark_data.gdb')
         self.gdb_path = os.path.join(self.root_dir, self.gdb_name)
+        self.gpkg_path = os.path.join(self.root_dir, 'benchmark_data.gpkg')
         self.manifest_path = os.path.join(self.root_dir, getattr(settings, 'BENCHMARK_MANIFEST_NAME', 'benchmark_manifest.json'))
 
     def _required_paths(self):
+        if self.output_format == 'SHP':
+            return [os.path.join(self.root_dir, 'analysis_boundary.shp')] + [
+                os.path.join(self.root_dir, '{}.shp'.format(d)) for d in ALL_INPUT_DATASETS
+            ]
+        if self.output_format == 'GPKG':
+            return [self.gpkg_path]
         return [
             self.gdb_path,
             os.path.join(self.gdb_path, 'analysis_boundary'),
@@ -542,7 +688,20 @@ class TestDataGenerator(object):
             'osm_pois',
             'osm_places',
         ]
+        if self.output_format == 'SHP':
+            return [os.path.join(self.root_dir, '{}.shp'.format(name)) for name in names]
+        if self.output_format == 'GPKG':
+            return [os.path.join(self.gpkg_path, name) for name in names]
         return [os.path.join(self.gdb_path, name) for name in names]
+
+    def _dataset_count(self, name):
+        if self.output_format == 'SHP':
+            path = os.path.join(self.root_dir, '{}.shp'.format(name))
+        elif self.output_format == 'GPKG':
+            path = os.path.join(self.gpkg_path, name)
+        else:
+            path = os.path.join(self.gdb_path, name)
+        return _feature_count(path)
 
     def _validate_existing_assets(self, manifest):
         if not manifest or not isinstance(manifest, dict):
@@ -551,10 +710,22 @@ class TestDataGenerator(object):
             return False
         if str(manifest.get('scale', '')).lower() != str(self.scale).lower():
             return False
-        if not os.path.isdir(self.gdb_path):
+        if str(manifest.get('output_format', '')).upper() != self.output_format:
             return False
-        if not os.path.exists(os.path.join(self.gdb_path, 'analysis_boundary')):
+        if str(manifest.get('complexity', '')).lower() != self.complexity:
             return False
+
+        if self.output_format == 'SHP':
+            if not os.path.exists(os.path.join(self.root_dir, 'analysis_boundary.shp')):
+                return False
+        elif self.output_format == 'GPKG':
+            if not os.path.exists(self.gpkg_path):
+                return False
+        else:
+            if not os.path.isdir(self.gdb_path):
+                return False
+            if not os.path.exists(os.path.join(self.gdb_path, 'analysis_boundary')):
+                return False
 
         constant_size = _raster_size(os.path.join(self.root_dir, 'constant_raster.tif'))
         analysis_size = _raster_size(os.path.join(self.root_dir, 'analysis_raster.tif'))
@@ -578,8 +749,7 @@ class TestDataGenerator(object):
         for name, expected_count in expected_counts.items():
             if int(dataset_counts.get(name, -1)) != int(expected_count):
                 return False
-            path = os.path.join(self.gdb_path, name)
-            if _feature_count(path) != int(expected_count):
+            if self._dataset_count(name) != int(expected_count):
                 return False
 
         return True
@@ -588,9 +758,12 @@ class TestDataGenerator(object):
         manifest = {
             'schema_version': MANIFEST_VERSION,
             'scale': self.scale,
+            'output_format': self.output_format,
+            'complexity': self.complexity,
             'generated_at': datetime.utcnow().isoformat(),
             'root_dir': self.root_dir,
             'gdb_path': self.gdb_path,
+            'gpkg_path': self.gpkg_path,
             'analysis_crs': PROJECTED_WKID,
             'source_mode': source_mode,
             'source_region': source_info.get('label') if source_info else 'Synthetic',
@@ -604,6 +777,10 @@ class TestDataGenerator(object):
             'raster_config': copy.deepcopy(self.raster_config),
             'dataset_counts': dataset_counts,
         }
+        if self.output_format == 'SHP':
+            manifest['analysis_boundary_path'] = os.path.join(self.root_dir, 'analysis_boundary.shp')
+        elif self.output_format == 'GPKG':
+            manifest['analysis_boundary_path'] = os.path.join(self.gpkg_path, 'analysis_boundary')
         return manifest
 
     def _build_from_source_layers(self, source_info):
@@ -660,6 +837,16 @@ class TestDataGenerator(object):
         _create_fishnet(test_polygons_a_fc, analysis_extent, rows_a, cols_a, 'osm_intersect_a', source_info.get('label', 'OSM'), offset=False)
         _create_fishnet(test_polygons_b_fc, analysis_extent, rows_b, cols_b, 'osm_intersect_b', source_info.get('label', 'OSM'), offset=True)
 
+        if self.complexity == 'complex':
+            print("  [Complex] Densifying polygon geometries")
+            for fc_name in ['spatial_join_polygons', 'calculate_field_fc', 'test_polygons_a', 'test_polygons_b']:
+                src = os.path.join(self.gdb_path, fc_name)
+                tmp = os.path.join(self.gdb_path, fc_name + '_tmp')
+                if arcpy.Exists(src):
+                    _densify_feature_class(src, tmp, interval_meters=20.0)
+                    arcpy.Delete_management(src)
+                    arcpy.Rename_management(tmp, fc_name)
+
         constant_raster_path, analysis_raster_path, block_size = _create_rasters(
             self.root_dir,
             analysis_extent,
@@ -715,6 +902,19 @@ class TestDataGenerator(object):
         _create_fishnet(test_polygons_a_fc, analysis_extent, rows_a, cols_a, 'synthetic_intersect_a', 'Synthetic', offset=False)
         _create_fishnet(test_polygons_b_fc, analysis_extent, rows_b, cols_b, 'synthetic_intersect_b', 'Synthetic', offset=True)
 
+        if self.complexity == 'complex':
+            print("  [Complex] Replacing fishnets with high-vertex star polygons")
+            arcpy.Delete_management(spatial_join_polygons_fc)
+            _create_complex_polygon(spatial_join_polygons_fc, int(self.vector_config['spatial_join_polygons']), analysis_extent, 'synthetic_join_zones', 'Synthetic')
+            arcpy.Delete_management(calculate_field_fc)
+            _create_complex_polygon(calculate_field_fc, int(self.vector_config['calculate_field_records']), analysis_extent, 'synthetic_calculate_field', 'Synthetic')
+            for fc_name in ['test_polygons_a', 'test_polygons_b']:
+                src = os.path.join(self.gdb_path, fc_name)
+                tmp = os.path.join(self.gdb_path, fc_name + '_tmp')
+                _densify_feature_class(src, tmp, interval_meters=15.0)
+                arcpy.Delete_management(src)
+                arcpy.Rename_management(tmp, fc_name)
+
         constant_raster_path, analysis_raster_path, block_size = _create_rasters(
             self.root_dir,
             analysis_extent,
@@ -744,6 +944,21 @@ class TestDataGenerator(object):
         manifest['analysis_crs'] = 3857
         return manifest
 
+    def _export_format(self):
+        """Export GDB contents to the requested output format."""
+        if self.output_format == 'GDB':
+            return
+        datasets = [n for n in ALL_INPUT_DATASETS if arcpy.Exists(os.path.join(self.gdb_path, n))]
+        if self.output_format == 'SHP':
+            print("  [Export] Writing SHP files")
+            _export_to_shp(self.gdb_path, self.root_dir, datasets)
+        elif self.output_format == 'GPKG':
+            print("  [Export] Writing GeoPackage")
+            try:
+                _export_to_gpkg(self.gdb_path, self.gpkg_path, datasets)
+            except Exception as exc:
+                print("  [Warning] GPKG export failed: {}. Keeping GDB fallback.".format(exc))
+
     def generate_all(self, force=False):
         """Generate all inputs and return the manifest payload."""
         if not HAS_ARCPY:
@@ -755,11 +970,16 @@ class TestDataGenerator(object):
         if not force:
             existing_manifest = load_manifest(self.root_dir, default={})
             if self._validate_existing_assets(existing_manifest):
-                print("  Reusing existing benchmark inputs from {}".format(self.gdb_path))
+                print("  Reusing existing benchmark inputs from {} (format={}, complexity={})".format(
+                    self.root_dir, self.output_format, self.complexity))
                 return existing_manifest
 
-        print("  Preparing benchmark inputs for scale: {}".format(self.scale))
+        print("  Preparing benchmark inputs for scale: {} | format: {} | complexity: {}".format(
+            self.scale, self.output_format, self.complexity))
         _delete_path(self.gdb_path)
+        _delete_path(self.gpkg_path)
+        for name in ALL_INPUT_DATASETS:
+            _delete_path(os.path.join(self.root_dir, '{}.shp'.format(name)))
 
         try:
             arcpy.CreateFileGDB_management(self.root_dir, self.gdb_name)
@@ -769,13 +989,18 @@ class TestDataGenerator(object):
         manifest = None
         source_info = None
         try:
-            try:
-                source_info = ensure_osm_sample_cache(getattr(settings, 'OSM_CACHE_DIR', None), preferred_source='hong-kong')
-                manifest = self._build_from_source_layers(source_info)
-            except Exception as osm_exc:
-                print("  [OSM] {}. Falling back to synthetic data.".format(osm_exc))
+            if self.complexity == 'medium' or self.complexity == 'complex':
+                try:
+                    from utils.osm_samples import ensure_osm_sample_cache
+                    source_info = ensure_osm_sample_cache(getattr(settings, 'OSM_CACHE_DIR', None), preferred_source='hong-kong')
+                    manifest = self._build_from_source_layers(source_info)
+                except Exception as osm_exc:
+                    print("  [OSM] {}. Falling back to synthetic data.".format(osm_exc))
+                    manifest = self._build_synthetic()
+            else:
                 manifest = self._build_synthetic()
 
+            self._export_format()
             save_manifest(self.root_dir, manifest)
             print("  Wrote manifest: {}".format(self.manifest_path))
             print("  Source mode: {}".format(manifest.get('source_mode')))
@@ -790,12 +1015,19 @@ class TestDataGenerator(object):
             clear_workspace_cache(self.root_dir)
 
 
-def generate_all(force=False):
+def generate_all(force=False, output_format=None, complexity=None):
     """Convenience wrapper used by external scripts."""
-    return TestDataGenerator().generate_all(force=force)
+    return TestDataGenerator(output_format=output_format, complexity=complexity).generate_all(force=force)
 
 
 if __name__ == '__main__':
     print("Generating benchmark input data...")
-    payload = generate_all(force='--force' in sys.argv)
-    print("Done. Mode: {}".format(payload.get('source_mode')))
+    fmt = 'GDB'
+    comp = 'simple'
+    if len(sys.argv) > 1:
+        fmt = sys.argv[1].upper()
+    if len(sys.argv) > 2:
+        comp = sys.argv[2].lower()
+    payload = generate_all(force='--force' in sys.argv, output_format=fmt, complexity=comp)
+    print("Done. Mode: {} | Format: {} | Complexity: {}".format(
+        payload.get('source_mode'), payload.get('output_format'), payload.get('complexity')))

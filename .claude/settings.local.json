@@ -1,6 +1,10 @@
 {
+  "env": {
+    "ENABLE_TOOL_SEARCH": "false",
+    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+    "ANTHROPIC_AUTH_TOKEN": "sk-kimi-QMw4ll6qqZUtzeIHmqxbx1iiST98g4B3grwdIbdGcPf0SpzqVxESgGSshlcI5dpZ"
+  },
   "permissions": {
-    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(python test_vbs_debug.py)",
       "Bash(wscript //nologo \"启动工具.vbs\")",
@@ -14,13 +18,15 @@
       "Bash(python benchmark_gui.py)",
       "Bash(cscript //nologo \"启动工具.vbs\")",
       "Bash(cmd /c \"启动工具_批处理版.bat\")",
-      "Bash(python -c \"print\\(''✅ Python可以正常运行GUI''\\)\")"
-    ]
-  },
-  "env": {
-    "ENABLE_TOOL_SEARCH": "false",
-    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
-    "ANTHROPIC_AUTH_TOKEN": "sk-kimi-QMw4ll6qqZUtzeIHmqxbx1iiST98g4B3grwdIbdGcPf0SpzqVxESgGSshlcI5dpZ"
+      "Bash(python -c \"print\\(''✅ Python可以正常运行GUI''\\)\")",
+      "Bash(ls -la d:/arcgis_performance_benchmark/*.bat d:/arcgis_performance_benchmark/*.vbs d:/arcgis_performance_benchmark/*.py)",
+      "Bash(mkdir -p legacy)",
+      "Bash(mv launch.vbs launch_gui.bat launch_gui.py start_gui_hidden.vbs 启动工具_系统Python.vbs legacy/)",
+      "Bash(mv \"启动工具.vbs\" \"ArcGIS基准测试工具.vbs\")",
+      "Bash(mv open_console.bat \"打开网页控制台.bat\")",
+      "Bash(ls -la *.bat *.vbs *.py legacy/)"
+    ],
+    "defaultMode": "bypassPermissions"
   },
   "alwaysThinkingEnabled": false,
   "defaultMode": "bypassPermissions"

@@ -26,7 +26,7 @@ ANALYZE_RESULTS_SCRIPT = os.path.join(PROJECT_DIR, "analyze_results.py")
 
 DEFAULT_SCALES = ["tiny", "small"]
 ALL_SCALES = ["tiny", "small", "standard", "medium", "large"]
-EXPECTED_BASE_TESTS = 12
+EXPECTED_BASE_TESTS = 6
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 PY27_CANDIDATES = [
@@ -185,6 +185,9 @@ def _default_config():
             4,
             minimum=1,
         ),
+        "format": "SHP",
+        "complexity": "simple",
+        "matrix": os.path.join(PROJECT_DIR, "configs", "matrix.json"),
     }
 
 
@@ -433,6 +436,9 @@ class VerificationScheduler(object):
             "include_opensource": bool(payload.get("include_opensource", defaults["include_opensource"])),
             "multiprocess": bool(payload.get("multiprocess", defaults["multiprocess"])),
             "mp_workers": _safe_int(payload.get("mp_workers"), defaults["mp_workers"], minimum=1),
+            "format": str(payload.get("format", defaults.get("format", "SHP"))).upper(),
+            "complexity": str(payload.get("complexity", defaults.get("complexity", "simple"))).lower(),
+            "matrix": str(payload.get("matrix", defaults.get("matrix", ""))),
         }
 
         config["opensource_supported"], config["opensource_reason"] = _probe_opensource_support(config["python3_path"])
@@ -450,7 +456,7 @@ class VerificationScheduler(object):
         matches.sort(key=lambda path: os.path.getmtime(path))
         return matches[-1]
 
-    def _build_benchmark_command(self, python_path, scale, output_dir, config, include_opensource=False):
+    def _build_benchmark_command(self, python_path, scale, output_dir, config, stack="arcpy_pro", generate_data=True):
         cmd = [
             python_path,
             "-u",
@@ -465,14 +471,21 @@ class VerificationScheduler(object):
             str(config["warmup"]),
             "--output-dir",
             output_dir,
-            "--generate-data",
+            "--format",
+            config.get("format", "SHP"),
+            "--complexity",
+            config.get("complexity", "simple"),
+            "--matrix",
+            config.get("matrix", os.path.join(PROJECT_DIR, "configs", "matrix.json")),
+            "--stack",
+            stack,
         ]
+
+        if generate_data:
+            cmd.append("--generate-data")
 
         if config["multiprocess"]:
             cmd.extend(["--multiprocess", "--mp-workers", str(config["mp_workers"])])
-
-        if include_opensource:
-            cmd.append("--opensource")
 
         return cmd
 
@@ -565,11 +578,6 @@ class VerificationScheduler(object):
                 }
 
             config = self._sanitize_config(payload or {})
-            if not config["python27_path"] or not os.path.exists(config["python27_path"]):
-                return {
-                    "ok": False,
-                    "error": "Python 2.7 interpreter was not found",
-                }
             if not config["python3_path"] or not os.path.exists(config["python3_path"]):
                 return {
                     "ok": False,
@@ -626,12 +634,14 @@ class VerificationScheduler(object):
             self._append_log("Session root: {}".format(session_root))
             self._append_log("Selected scales: {}".format(", ".join(config["selected_scales"])))
             self._append_log(
-                "Runs: {} | Warmup: {} | Generate data: {} | Open-source: {} | Multiprocess: {}".format(
+                "Runs: {} | Warmup: {} | Generate data: {} | Open-source: {} | Multiprocess: {} | Format: {} | Complexity: {}".format(
                     config["runs"],
                     config["warmup"],
                     "yes" if config["generate_data"] else "no",
                     "yes" if config["include_opensource"] else "no",
                     "yes" if config["multiprocess"] else "no",
+                    config.get("format", "SHP"),
+                    config.get("complexity", "simple"),
                 )
             )
             return {
@@ -654,9 +664,11 @@ class VerificationScheduler(object):
         self._append_log("Stop requested")
         return {"ok": True}
 
-    def _validate_scale(self, scale_name, scale_output_dir, include_opensource):
+    def _validate_scale(self, scale_name, scale_output_dir, include_opensource, has_py2=True):
         issues = []
-        expected_groups = ["py2", "py3"]
+        expected_groups = ["py3"]
+        if has_py2:
+            expected_groups.insert(0, "py2")
         if include_opensource:
             expected_groups.append("os")
 
@@ -715,7 +727,22 @@ class VerificationScheduler(object):
             if str(report_context.get("data_scale", "")).lower() != str(scale_name).lower():
                 issues.append("comparison report context scale mismatch")
 
-        passed = not issues
+        # standard 及以上规模允许缺少 py2 结果（32 位内存限制为已知问题），但仍要求 py3 和分析产物
+        if issues:
+            if scale_name in ["standard", "medium", "large"] and has_py2:
+                # 过滤掉仅因 py2 缺失/失败导致的问题
+                py2_only_issues = [i for i in issues if i.startswith("py2:")]
+                non_py2_issues = [i for i in issues if not i.startswith("py2:")]
+                if not non_py2_issues:
+                    issues = py2_only_issues  # 保留为 warning 但不阻断
+                    passed = True
+                else:
+                    passed = False
+            else:
+                passed = False
+        else:
+            passed = True
+
         return {
             "status": "passed" if passed else "failed",
             "issues": issues,
@@ -746,50 +773,59 @@ class VerificationScheduler(object):
         os_stage = scale_state["stages"]["os"]
         analysis_stage = scale_state["stages"]["analysis"]
         validation_stage = scale_state["stages"]["validation"]
+        has_py2 = bool(config.get("python27_path") and os.path.exists(config["python27_path"]))
 
         if self._stop_event.is_set():
             scale_state["status"] = "skipped"
             scale_state["issues"].append("Skipped before start")
             return scale_state
 
-        py2_cmd = self._build_benchmark_command(
-            config["python27_path"],
-            scale,
-            scale_output_dir,
-            config,
-            include_opensource=False,
-        )
-        py2_result = self._run_process(scale, "py2", py2_cmd, PROJECT_DIR)
-        py2_stage.update(py2_result)
+        if has_py2:
+            py2_cmd = self._build_benchmark_command(
+                config["python27_path"],
+                scale,
+                scale_output_dir,
+                config,
+                stack="arcpy_desktop",
+                generate_data=True,
+            )
+            py2_result = self._run_process(scale, "py2", py2_cmd, PROJECT_DIR)
+            py2_stage.update(py2_result)
+        else:
+            py2_stage.update({
+                "status": "skipped",
+                "summary": "Python 2.7 interpreter not available; skipped",
+                "details": {"expected": False},
+            })
 
         with self._state_lock:
             self._state["current_stage"] = "py3"
 
-        py3_include_os = bool(config["include_opensource"] and config["opensource_supported"])
         py3_cmd = self._build_benchmark_command(
             config["python3_path"],
             scale,
             scale_output_dir,
             config,
-            include_opensource=py3_include_os,
+            stack="arcpy_pro",
+            generate_data=(not has_py2),
         )
         py3_result = self._run_process(scale, "py3", py3_cmd, PROJECT_DIR)
         py3_stage.update(py3_result)
 
+        py3_include_os = bool(config["include_opensource"] and config["opensource_supported"])
         if py3_include_os:
-            os_stage.update({
-                "status": "pending",
-                "return_code": py3_result.get("return_code"),
-                "duration_sec": 0.0,
-                "command": "Included in py3 benchmark run",
-                "output_tail": [],
-                "summary": "Open-source results were generated inside the py3 stage",
-                "details": {
-                    "expected": True,
-                },
-                "started_at": py3_stage.get("started_at"),
-                "finished_at": py3_stage.get("finished_at"),
-            })
+            with self._state_lock:
+                self._state["current_stage"] = "os"
+            os_cmd = self._build_benchmark_command(
+                config["python3_path"],
+                scale,
+                scale_output_dir,
+                config,
+                stack="oss",
+                generate_data=False,
+            )
+            os_result = self._run_process(scale, "os", os_cmd, PROJECT_DIR)
+            os_stage.update(os_result)
         else:
             os_stage.update({
                 "status": "skipped",
@@ -818,7 +854,7 @@ class VerificationScheduler(object):
         with self._state_lock:
             self._state["current_stage"] = "validation"
 
-        validation = self._validate_scale(scale, scale_output_dir, py3_include_os)
+        validation = self._validate_scale(scale, scale_output_dir, py3_include_os, has_py2=has_py2)
         validation_stage.update({
             "status": validation["status"],
             "return_code": 0 if validation["status"] == "passed" else 1,
@@ -862,13 +898,12 @@ class VerificationScheduler(object):
                 "statistics": statistics,
             }
 
-        if (
-            py2_stage["status"] == "passed"
-            and py3_stage["status"] == "passed"
-            and analysis_stage["status"] == "passed"
-            and validation["status"] == "passed"
-            and not self._stop_event.is_set()
-        ):
+        required_stages_ok = [py3_stage["status"] == "passed", analysis_stage["status"] == "passed", validation["status"] == "passed"]
+        # 对于 tiny/small 规模，仍要求 py2（32 位通常能跑过）；standard 及以上因内存限制，py2 失败不阻断整体通过
+        if has_py2 and scale in ["tiny", "small"]:
+            required_stages_ok.insert(0, py2_stage["status"] == "passed")
+
+        if all(required_stages_ok) and not self._stop_event.is_set():
             scale_state["status"] = "passed"
             self._append_log("Scale {} passed validation".format(scale))
         elif self._stop_event.is_set():
@@ -876,7 +911,7 @@ class VerificationScheduler(object):
             self._append_log("Scale {} stopped".format(scale))
         else:
             scale_state["status"] = "failed"
-            if py2_stage["status"] != "passed":
+            if has_py2 and scale in ["tiny", "small"] and py2_stage["status"] != "passed":
                 scale_state["issues"].append("py2 stage failed")
             if py3_stage["status"] != "passed":
                 scale_state["issues"].append("py3 stage failed")

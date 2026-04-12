@@ -184,9 +184,10 @@ class R1_CreateConstantRaster_OS(BaseBenchmark):
 
 class R2_Resample_OS(BaseBenchmark):
     """Benchmark: Raster Resample using Rasterio"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='GPKG'):
         super(R2_Resample_OS, self).__init__("R2_Resample_OS", "raster_os")
+        self.output_format = output_format
         cfg = settings.get_raster_config_for_test('R2')
         self.source_size = cfg.get('resample_source_size', cfg.get('analysis_raster_size'))
         self.target_size = cfg.get('resample_target_size', cfg.get('analysis_raster_target_size'))
@@ -262,9 +263,10 @@ class R2_Resample_OS(BaseBenchmark):
 
 class R3_Clip_OS(BaseBenchmark):
     """Benchmark: Raster Clip using Rasterio"""
-    
-    def __init__(self):
+
+    def __init__(self, output_format='GPKG'):
         super(R3_Clip_OS, self).__init__("R3_Clip_OS", "raster_os")
+        self.output_format = output_format
         cfg = settings.get_raster_config_for_test('R3')
         self.clip_ratio = cfg.get('analysis_raster_clip_ratio', cfg.get('clip_ratio'))
         self.input_path = None

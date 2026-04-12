@@ -4,13 +4,11 @@ ScriptDir = FSO.GetParentFolderName(WScript.ScriptFullName)
 DesktopPath = WShell.SpecialFolders("Desktop")
 Set Shortcut = WShell.CreateShortcut(DesktopPath & "\ArcGIS Benchmark.lnk")
 Shortcut.TargetPath = "wscript.exe"
-Shortcut.Arguments = """" & ScriptDir & "\Æô¶¯¹¤¾ß.vbs"""
+Shortcut.Arguments = """" & ScriptDir & "\ArcGISåŸºå‡†æµ‹è¯•å·¥å…·.vbs"""
 Shortcut.WorkingDirectory = ScriptDir
-Shortcut.Description = "ArcGIS Python2¡¢3 Óë¿ªÔ´¿âĞÔÄÜ¶Ô±È²âÊÔ¹¤¾ß"
+Shortcut.Description = "ArcGIS Python2ã€3 ä¸å¼€æºåº“æ€§èƒ½å¯¹æ¯”æµ‹è¯•å·¥å…·"
 Shortcut.IconLocation = ScriptDir & "\resources\icon.ico"
 Shortcut.Save
-MsgBox "Desktop shortcut created!", 64, "Done"
+MsgBox "æ¡Œé¢å¿«æ·æ–¹å¼å·²åˆ›å»ºï¼", 64, "å®Œæˆ"
 Set WShell = Nothing
 Set FSO = Nothing
-
-
